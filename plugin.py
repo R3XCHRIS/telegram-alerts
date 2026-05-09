@@ -1,7 +1,8 @@
 """
 Telegram Alerts — Dispatcharr plugin
 (slug: telegram-alerts)
-v0.2.0 — optional stream-source + EPG "now playing" enrichment.
+v0.2.1 — stream source respects channel priority order (was previously
+         returning whatever Stream PK came first, not the user's #1).
 
 MIT License
 Copyright (c) 2026 R3XCHRIS
@@ -41,7 +42,7 @@ class Plugin:
     """Send Dispatcharr alerts to a Telegram chat."""
 
     name = "Telegram Alerts"
-    version = "0.2.0"
+    version = "0.2.1"
     description = (
         "Push Dispatcharr channel/stream events to a Telegram chat via a bot. "
         "Includes a manual test action and per-event toggles."
@@ -385,9 +386,16 @@ class Plugin:
 
     @staticmethod
     def _lookup_stream_source(channel_name: Optional[str]) -> Optional[str]:
-        """Return the M3U account name of the channel's first configured
-        stream. Returns None for any failure (channel not found, no streams,
-        no M3U account, DB error) so a lookup hiccup never breaks the alert.
+        """Return the M3U account name of the channel's highest-priority
+        configured stream (the one shown first in Dispatcharr's channel UI).
+
+        Channel-to-stream is M2M through `ChannelStream`, which has an
+        `order` field set by the user. Django's M2M reverse access does
+        NOT auto-apply the through-model's Meta.ordering, so we order
+        explicitly by `channelstream__order`.
+
+        Returns None for any failure so a lookup hiccup never breaks the
+        alert.
         """
         if not channel_name:
             return None
@@ -396,7 +404,7 @@ class Plugin:
             channel = Channel.objects.filter(name=channel_name).first()
             if not channel:
                 return None
-            stream = channel.streams.first()
+            stream = channel.streams.all().order_by("channelstream__order").first()
             if not stream or not getattr(stream, "m3u_account", None):
                 return None
             return stream.m3u_account.name or None

@@ -1,6 +1,6 @@
 {
   "name": "Telegram Alerts",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Push Dispatcharr channel/stream events to a Telegram chat via a bot. Includes a manual test action and per-event toggles.",
   "author": "R3XCHRIS",
   "license": "MIT",

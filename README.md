@@ -163,6 +163,9 @@ The tests cover the pure helpers (token masking, HTML escaping, message formatti
 
 ## Changelog
 
+### 0.2.1
+- Fix: **Include Stream Source** now returns the channel's *highest-priority* configured stream (the one shown first in Dispatcharr's UI). Previously it returned an arbitrary stream — usually the lowest Stream PK, which on multi-source channels was rarely the user's #1.
+
 ### 0.2.0
 - New optional enrichment toggles: **Include Stream Source** (M3U account name) and **Include Current EPG Program** (now-playing title). Both off by default; each adds one DB lookup per event when on.
 - Lookups degrade silently — a missing EPG mapping or DB hiccup omits the line rather than breaking the alert.
