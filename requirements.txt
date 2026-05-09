@@ -1,0 +1,9 @@
+# Telegram Alerts has no external Python dependencies.
+# It uses only the Python standard library (urllib, json, html, re, socket).
+#
+# Dispatcharr already provides:
+#   - Django (for plugin loader / context)
+#   - requests (not used here, but available if you fork)
+#
+# For local development of the test suite:
+#   pip install pytest

@@ -1,0 +1,113 @@
+{
+  "name": "Telegram Alerts",
+  "version": "0.1.0",
+  "description": "Push Dispatcharr channel/stream events to a Telegram chat via a bot. Includes a manual test action and per-event toggles.",
+  "author": "R3XCHRIS",
+  "license": "MIT",
+  "min_dispatcharr_version": "v0.20.0",
+  "repo_url": "https://github.com/R3XCHRIS/telegram-alerts",
+  "fields": [
+    {
+      "id": "_about",
+      "label": "About",
+      "type": "info",
+      "description": "Setup:\n  1. Create a bot with @BotFather on Telegram, copy the token.\n  2. Send any message to your bot (or add it to a group).\n  3. Visit https://api.telegram.org/bot<TOKEN>/getUpdates and copy chat.id.\n  4. Paste both below, Save, then Actions → Send Test Message.\n\nDocs: https://github.com/R3XCHRIS/telegram-alerts"
+    },
+    {
+      "id": "_section_telegram",
+      "label": "[TELEGRAM]",
+      "type": "info",
+      "description": "Bot credentials and instance identity."
+    },
+    {
+      "id": "bot_token",
+      "label": "Bot Token (REQUIRED)",
+      "type": "string",
+      "default": "",
+      "placeholder": "123456:ABC-DEF...",
+      "help_text": "Telegram bot token from @BotFather. Masked in logs."
+    },
+    {
+      "id": "chat_id",
+      "label": "Chat ID (REQUIRED)",
+      "type": "string",
+      "default": "",
+      "placeholder": "-1001234567890 or 123456789",
+      "help_text": "Numeric chat ID. Find via /getUpdates after messaging the bot. Group IDs are negative."
+    },
+    {
+      "id": "instance_label",
+      "label": "Instance Label",
+      "type": "string",
+      "default": "Dispatcharr",
+      "help_text": "Prefixed in every message, e.g. '[Yoda]'. Useful when multiple Dispatcharr instances send to the same chat."
+    },
+    {
+      "id": "_section_alerts",
+      "label": "[ALERTS] Toggles",
+      "type": "info",
+      "description": "Pick which channel/stream events generate Telegram messages."
+    },
+    {
+      "id": "alert_channel_start",
+      "label": "Alert on Channel Start",
+      "type": "boolean",
+      "default": false,
+      "help_text": "Off by default — can be noisy with many channels."
+    },
+    {
+      "id": "alert_channel_stop",
+      "label": "Alert on Channel Stop",
+      "type": "boolean",
+      "default": false,
+      "help_text": "Off by default — can be noisy."
+    },
+    {
+      "id": "alert_channel_reconnect",
+      "label": "Alert on Channel Reconnect",
+      "type": "boolean",
+      "default": true,
+      "help_text": "On by default — usually a useful warning signal for flaky upstreams."
+    },
+    {
+      "id": "alert_stream_switch",
+      "label": "Alert on Stream Switch",
+      "type": "boolean",
+      "default": false,
+      "help_text": "Off by default — fires whenever a stream URL is swapped."
+    },
+    {
+      "id": "_section_format",
+      "label": "[FORMAT]",
+      "type": "info",
+      "description": "Message rendering."
+    },
+    {
+      "id": "message_format",
+      "label": "Message Format",
+      "type": "select",
+      "default": "HTML",
+      "options": [
+        {"value": "HTML", "label": "HTML (bold, code formatting)"},
+        {"value": "plain", "label": "Plain text"}
+      ],
+      "help_text": "HTML uses Telegram's HTML parse mode. Plain disables formatting."
+    }
+  ],
+  "actions": [
+    {
+      "id": "send_test",
+      "label": "[ALERT] Send test message",
+      "description": "Send a test message to the configured chat. Verifies token, chat ID, and formatting.",
+      "button_label": "Send Test",
+      "button_variant": "filled",
+      "button_color": "blue"
+    },
+    {
+      "id": "on_event",
+      "label": "Handle channel/stream event (internal)",
+      "description": "Triggered by Dispatcharr on channel/stream events. Don't run manually.",
+      "events": ["channel_start", "channel_stop", "channel_reconnect", "stream_switch"]
+    }
+  ]
+}
