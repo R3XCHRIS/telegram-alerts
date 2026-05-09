@@ -1,6 +1,6 @@
 {
   "name": "Telegram Alerts",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Push Dispatcharr channel/stream events to a Telegram chat via a bot. Includes a manual test action and per-event toggles.",
   "author": "R3XCHRIS",
   "license": "MIT",
@@ -75,6 +75,26 @@
       "type": "boolean",
       "default": false,
       "help_text": "Off by default — fires whenever a stream URL is swapped."
+    },
+    {
+      "id": "_section_enrichment",
+      "label": "[ENRICHMENT]",
+      "type": "info",
+      "description": "Optionally include extra context per alert. Each toggle adds one DB lookup per event."
+    },
+    {
+      "id": "include_stream_source",
+      "label": "Include Stream Source",
+      "type": "boolean",
+      "default": false,
+      "help_text": "Add the M3U account name (the channel's first configured stream's source) to each alert."
+    },
+    {
+      "id": "include_current_program",
+      "label": "Include Current EPG Program",
+      "type": "boolean",
+      "default": false,
+      "help_text": "Add the currently-airing program title from EPG data to each alert. Requires the channel to have an EPG mapping."
     },
     {
       "id": "_section_format",

@@ -1,7 +1,7 @@
 """
 Telegram Alerts — Dispatcharr plugin
 (slug: telegram-alerts)
-v0.1.0 — initial release: manual test + event-driven channel alerts.
+v0.2.0 — optional stream-source + EPG "now playing" enrichment.
 
 MIT License
 Copyright (c) 2026 R3XCHRIS
@@ -41,7 +41,7 @@ class Plugin:
     """Send Dispatcharr alerts to a Telegram chat."""
 
     name = "Telegram Alerts"
-    version = "0.1.0"
+    version = "0.2.0"
     description = (
         "Push Dispatcharr channel/stream events to a Telegram chat via a bot. "
         "Includes a manual test action and per-event toggles."
@@ -125,6 +125,26 @@ class Plugin:
             "type": "boolean",
             "default": False,
             "help_text": "Off by default — fires whenever a stream URL is swapped.",
+        },
+        {
+            "id": "_section_enrichment",
+            "label": "[ENRICHMENT]",
+            "type": "info",
+            "description": "Optionally include extra context per alert. Each toggle adds one DB lookup per event.",
+        },
+        {
+            "id": "include_stream_source",
+            "label": "Include Stream Source",
+            "type": "boolean",
+            "default": False,
+            "help_text": "Add the M3U account name (the channel's first configured stream's source) to each alert.",
+        },
+        {
+            "id": "include_current_program",
+            "label": "Include Current EPG Program",
+            "type": "boolean",
+            "default": False,
+            "help_text": "Add the currently-airing program title from EPG data to each alert. Requires the channel to have an EPG mapping.",
         },
         {
             "id": "_section_format",
@@ -239,10 +259,24 @@ class Plugin:
             logger.error("on_event[%s]: %s", event, err)
             return {"status": "error", "message": err}
 
-        text = self._format_event_message(event, payload, label, fmt)
+        channel_name = payload.get("channel_name")
+        source = (
+            self._lookup_stream_source(channel_name)
+            if settings.get("include_stream_source")
+            else None
+        )
+        program = (
+            self._lookup_current_program(channel_name)
+            if settings.get("include_current_program")
+            else None
+        )
+
+        text = self._format_event_message(
+            event, payload, label, fmt, source=source, program=program,
+        )
         logger.info(
-            "on_event[%s]: channel=%s sending to chat=%s",
-            event, payload.get("channel_name"), chat_id,
+            "on_event[%s]: channel=%s source=%s program=%s sending to chat=%s",
+            event, channel_name, source, program, chat_id,
         )
 
         ok, message = self._send_telegram(token, chat_id, text, fmt, logger)
@@ -308,7 +342,13 @@ class Plugin:
 
     @classmethod
     def _format_event_message(
-        cls, event: str, payload: Dict[str, Any], instance_label: str, fmt: str
+        cls,
+        event: str,
+        payload: Dict[str, Any],
+        instance_label: str,
+        fmt: str,
+        source: Optional[str] = None,
+        program: Optional[str] = None,
     ) -> str:
         meta = EVENT_META.get(event, {"emoji": "•", "label": event})
         emoji = meta["emoji"]
@@ -323,6 +363,10 @@ class Plugin:
             ]
             if stream:
                 lines.append(f"Stream: <code>{cls._escape_html(stream)}</code>")
+            if source:
+                lines.append(f"Source: <code>{cls._escape_html(source)}</code>")
+            if program:
+                lines.append(f"Now playing: <code>{cls._escape_html(program)}</code>")
             return "\n".join(lines)
 
         lines = [
@@ -331,7 +375,55 @@ class Plugin:
         ]
         if stream:
             lines.append(f"Stream: {stream}")
+        if source:
+            lines.append(f"Source: {source}")
+        if program:
+            lines.append(f"Now playing: {program}")
         return "\n".join(lines)
+
+    # ----- Dispatcharr DB lookups (not unit-tested — Django-dependent) ----
+
+    @staticmethod
+    def _lookup_stream_source(channel_name: Optional[str]) -> Optional[str]:
+        """Return the M3U account name of the channel's first configured
+        stream. Returns None for any failure (channel not found, no streams,
+        no M3U account, DB error) so a lookup hiccup never breaks the alert.
+        """
+        if not channel_name:
+            return None
+        try:
+            from apps.channels.models import Channel
+            channel = Channel.objects.filter(name=channel_name).first()
+            if not channel:
+                return None
+            stream = channel.streams.first()
+            if not stream or not getattr(stream, "m3u_account", None):
+                return None
+            return stream.m3u_account.name or None
+        except Exception:
+            return None
+
+    @staticmethod
+    def _lookup_current_program(channel_name: Optional[str]) -> Optional[str]:
+        """Return the title of the program currently airing on this channel
+        per its EPG data, or None if no EPG mapping / no matching program."""
+        if not channel_name:
+            return None
+        try:
+            from apps.channels.models import Channel
+            from django.utils import timezone
+            channel = Channel.objects.filter(name=channel_name).first()
+            if not channel or not channel.epg_data_id:
+                return None
+            now = timezone.now()
+            program = channel.epg_data.programs.filter(
+                start_time__lte=now, end_time__gt=now
+            ).first()
+            if not program:
+                return None
+            return program.title or None
+        except Exception:
+            return None
 
     # ----- HTTP (network — not unit-tested) -------------------------------
 

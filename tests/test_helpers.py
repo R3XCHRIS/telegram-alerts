@@ -218,6 +218,99 @@ class TestFormatEventMessage:
         assert "some_new_event" in msg
 
 
+# ---------- Enrichment fields (source / program) ----------------------------
+
+class TestFormatEventMessageEnrichment:
+    def test_html_source_only(self):
+        msg = Plugin._format_event_message(
+            "channel_start", {"channel_name": "ESPN"}, "Yoda", "HTML",
+            source="MyIPTV",
+        )
+        assert "Source: <code>MyIPTV</code>" in msg
+        assert "Now playing:" not in msg
+
+    def test_html_program_only(self):
+        msg = Plugin._format_event_message(
+            "channel_start", {"channel_name": "ESPN"}, "Yoda", "HTML",
+            program="NFL Live",
+        )
+        assert "Now playing: <code>NFL Live</code>" in msg
+        assert "Source:" not in msg
+
+    def test_html_both_source_and_program(self):
+        msg = Plugin._format_event_message(
+            "channel_start", {"channel_name": "ESPN"}, "Yoda", "HTML",
+            source="MyIPTV", program="NFL Live",
+        )
+        assert "Source: <code>MyIPTV</code>" in msg
+        assert "Now playing: <code>NFL Live</code>" in msg
+
+    def test_plain_both_source_and_program(self):
+        msg = Plugin._format_event_message(
+            "channel_start", {"channel_name": "ESPN"}, "Yoda", "plain",
+            source="MyIPTV", program="NFL Live",
+        )
+        assert "<code>" not in msg
+        assert "Source: MyIPTV" in msg
+        assert "Now playing: NFL Live" in msg
+
+    def test_none_values_omit_lines_silently(self):
+        # None for either field should produce no line at all — never
+        # "Source: (unknown)" or "Source: None".
+        msg = Plugin._format_event_message(
+            "channel_start", {"channel_name": "ESPN"}, "Yoda", "HTML",
+            source=None, program=None,
+        )
+        assert "Source:" not in msg
+        assert "Now playing:" not in msg
+        assert "None" not in msg
+
+    def test_empty_string_omits_line(self):
+        # Empty strings are falsy too — same treatment as None.
+        msg = Plugin._format_event_message(
+            "channel_start", {"channel_name": "ESPN"}, "Yoda", "HTML",
+            source="", program="",
+        )
+        assert "Source:" not in msg
+        assert "Now playing:" not in msg
+
+    def test_html_escapes_source_and_program(self):
+        # User-supplied M3U account names and EPG titles can contain
+        # HTML metacharacters (e.g. "Channel <4>"). Must be escaped.
+        msg = Plugin._format_event_message(
+            "channel_start", {"channel_name": "ESPN"}, "Yoda", "HTML",
+            source="A & B <prov>", program="<i>Live</i> & Loud",
+        )
+        assert "A &amp; B &lt;prov&gt;" in msg
+        assert "&lt;i&gt;Live&lt;/i&gt; &amp; Loud" in msg
+        # Make sure no raw tags survived.
+        assert "<prov>" not in msg
+        assert "<i>Live</i>" not in msg
+
+    def test_plain_does_not_escape_source_or_program(self):
+        # Plain mode passes user input through literally — no HTML mangling.
+        msg = Plugin._format_event_message(
+            "channel_start", {"channel_name": "ESPN"}, "Yoda", "plain",
+            source="A & B", program="<i>Live</i>",
+        )
+        assert "Source: A & B" in msg
+        assert "Now playing: <i>Live</i>" in msg
+
+    def test_source_appears_after_stream_for_stream_switch(self):
+        # Field ordering: emoji/title, channel, stream, source, program.
+        msg = Plugin._format_event_message(
+            "stream_switch",
+            {"channel_name": "ESPN", "stream_name": "backup-feed"},
+            "Yoda", "HTML",
+            source="MyIPTV", program="NFL Live",
+        )
+        # Verify the three optional lines appear in the expected order.
+        idx_stream = msg.index("Stream:")
+        idx_source = msg.index("Source:")
+        idx_program = msg.index("Now playing:")
+        assert idx_stream < idx_source < idx_program
+
+
 # ---------- EVENT_META consistency ------------------------------------------
 
 class TestEventMetaConsistency:

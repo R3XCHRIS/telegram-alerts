@@ -5,6 +5,7 @@ A [Dispatcharr](https://github.com/Dispatcharr/Dispatcharr) plugin that pushes c
 - **Manual test action** — verify your bot before trusting it with real alerts.
 - **Event-driven** — subscribes to Dispatcharr's `channel_start`, `channel_stop`, `channel_reconnect`, and `stream_switch` events. Per-event toggles let you control noise.
 - **HTML formatting** with safe escaping; a plain-text fallback is also available.
+- **Optional enrichment** — opt-in toggles to include the channel's M3U source and the EPG "now playing" title.
 - **Zero external dependencies** — uses only the Python standard library.
 - **Per-instance label** — tag every message with which Dispatcharr instance it came from.
 
@@ -73,12 +74,14 @@ You can send the alerts to either a personal DM with the bot or a group/channel.
 
 ## What gets sent
 
-Each alert is a short structured message. Example (HTML mode):
+Each alert is a short structured message. Example (HTML mode, both enrichment toggles on):
 
 ```
 🔄 [Yoda] Channel reconnected
 Channel: ESPN
 Stream: backup-feed
+Source: MyIPTVProvider
+Now playing: NFL Live
 ```
 
 Field meanings:
@@ -89,6 +92,10 @@ Field meanings:
 | `[Yoda]` | The **Instance Label** setting |
 | Channel | `payload.channel_name` from Dispatcharr's event |
 | Stream  | `payload.stream_name` (only present for `stream_switch`) |
+| Source  | M3U account name of the channel's first configured stream — only when **Include Stream Source** is on |
+| Now playing | EPG title where `start_time ≤ now < end_time` — only when **Include Current EPG Program** is on |
+
+Optional fields are skipped silently when the lookup returns nothing (e.g. no EPG mapping), so messages stay tidy.
 
 Channel UUIDs are not included — Dispatcharr's event payload doesn't carry them.
 
@@ -105,6 +112,8 @@ Channel UUIDs are not included — Dispatcharr's event payload doesn't carry the
 | Alert on Channel Stop | boolean | off | Noisy. |
 | Alert on Channel Reconnect | boolean | **on** | Useful warning signal. |
 | Alert on Stream Switch | boolean | off | Fires whenever a stream URL is swapped. |
+| Include Stream Source | boolean | off | Adds the M3U account name to each alert. One DB lookup per event. |
+| Include Current EPG Program | boolean | off | Adds the currently-airing program title. Requires the channel to have an EPG mapping. One DB lookup per event. |
 | Message Format | select | `HTML` | `HTML` or `plain`. |
 
 ---
@@ -153,6 +162,10 @@ The tests cover the pure helpers (token masking, HTML escaping, message formatti
 ---
 
 ## Changelog
+
+### 0.2.0
+- New optional enrichment toggles: **Include Stream Source** (M3U account name) and **Include Current EPG Program** (now-playing title). Both off by default; each adds one DB lookup per event when on.
+- Lookups degrade silently — a missing EPG mapping or DB hiccup omits the line rather than breaking the alert.
 
 ### 0.1.0
 - Initial release.
