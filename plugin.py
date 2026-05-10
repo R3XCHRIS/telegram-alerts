@@ -1,8 +1,8 @@
 """
 Telegram Alerts — Dispatcharr plugin
 (slug: telegram-alerts)
-v0.2.1 — stream source respects channel priority order (was previously
-         returning whatever Stream PK came first, not the user's #1).
+v0.3.0 — adds vod_start / vod_stop event support with title + optional
+         source enrichment for VODs.
 
 MIT License
 Copyright (c) 2026 R3XCHRIS
@@ -18,20 +18,26 @@ import urllib.request
 from typing import Any, Dict, Optional, Tuple
 
 
-# Events Dispatcharr emits that this plugin subscribes to. Names match the
-# static-image-detector reference plugin and Dispatcharr's
-# `dispatch_event_system`. The payload Dispatcharr passes via
-# `params["payload"]` is a dict containing at least `channel_name`; for
-# stream_switch it also carries `stream_name`.
-EVENT_NAMES = ("channel_start", "channel_stop", "channel_reconnect", "stream_switch")
+# Events Dispatcharr emits that this plugin subscribes to. Channel events
+# carry `channel_name` (and `stream_name` for stream_switch) in the payload.
+# VOD events carry `content_name` and `content_uuid` instead — VODs aren't
+# channels and Dispatcharr's `dispatch_event_system` doesn't enrich them
+# with channel-side fields.
+EVENT_NAMES = (
+    "channel_start", "channel_stop", "channel_reconnect", "stream_switch",
+    "vod_start", "vod_stop",
+)
 
-# Per-event presentation. Order: emoji, severity label, default-on flag.
-# `default_on` is documented here so the fields list stays the source of truth.
+VOD_EVENTS = frozenset({"vod_start", "vod_stop"})
+
+# Per-event presentation: emoji, severity label, settings-toggle key.
 EVENT_META = {
     "channel_start":     {"emoji": "▶",  "label": "Channel started",     "toggle": "alert_channel_start"},
     "channel_stop":      {"emoji": "⏹",  "label": "Channel stopped",     "toggle": "alert_channel_stop"},
     "channel_reconnect": {"emoji": "🔄", "label": "Channel reconnected", "toggle": "alert_channel_reconnect"},
     "stream_switch":     {"emoji": "🔀", "label": "Stream switched",     "toggle": "alert_stream_switch"},
+    "vod_start":         {"emoji": "🎬", "label": "VOD started",         "toggle": "alert_vod_start"},
+    "vod_stop":          {"emoji": "🛑", "label": "VOD stopped",         "toggle": "alert_vod_stop"},
 }
 
 TELEGRAM_API = "https://api.telegram.org"
@@ -42,7 +48,7 @@ class Plugin:
     """Send Dispatcharr alerts to a Telegram chat."""
 
     name = "Telegram Alerts"
-    version = "0.2.1"
+    version = "0.3.0"
     description = (
         "Push Dispatcharr channel/stream events to a Telegram chat via a bot. "
         "Includes a manual test action and per-event toggles."
@@ -128,6 +134,20 @@ class Plugin:
             "help_text": "Off by default — fires whenever a stream URL is swapped.",
         },
         {
+            "id": "alert_vod_start",
+            "label": "Alert on VOD Start",
+            "type": "boolean",
+            "default": False,
+            "help_text": "Off by default — fires every time a movie/episode starts playing. Can be chatty in multi-user setups.",
+        },
+        {
+            "id": "alert_vod_stop",
+            "label": "Alert on VOD Stop",
+            "type": "boolean",
+            "default": False,
+            "help_text": "Off by default — fires every time VOD playback ends.",
+        },
+        {
             "id": "_section_enrichment",
             "label": "[ENRICHMENT]",
             "type": "info",
@@ -179,8 +199,8 @@ class Plugin:
         },
         {
             "id": "on_event",
-            "label": "Handle channel/stream event (internal)",
-            "description": "Triggered by Dispatcharr on channel/stream events. Don't run manually.",
+            "label": "Handle channel/stream/VOD event (internal)",
+            "description": "Triggered by Dispatcharr on channel/stream/VOD events. Don't run manually.",
             "events": list(EVENT_NAMES),
         },
     ]
@@ -260,15 +280,22 @@ class Plugin:
             logger.error("on_event[%s]: %s", event, err)
             return {"status": "error", "message": err}
 
-        channel_name = payload.get("channel_name")
-        source = (
-            self._lookup_stream_source(channel_name)
-            if settings.get("include_stream_source")
-            else None
-        )
+        is_vod = event in VOD_EVENTS
+        primary_id = payload.get("content_name") if is_vod else payload.get("channel_name")
+
+        if settings.get("include_stream_source"):
+            source = (
+                self._lookup_vod_source(payload.get("content_uuid"))
+                if is_vod
+                else self._lookup_stream_source(payload.get("channel_name"))
+            )
+        else:
+            source = None
+
+        # EPG "now playing" only applies to live channels — VODs have no EPG.
         program = (
-            self._lookup_current_program(channel_name)
-            if settings.get("include_current_program")
+            self._lookup_current_program(payload.get("channel_name"))
+            if settings.get("include_current_program") and not is_vod
             else None
         )
 
@@ -276,8 +303,8 @@ class Plugin:
             event, payload, label, fmt, source=source, program=program,
         )
         logger.info(
-            "on_event[%s]: channel=%s source=%s program=%s sending to chat=%s",
-            event, channel_name, source, program, chat_id,
+            "on_event[%s]: target=%s source=%s program=%s sending to chat=%s",
+            event, primary_id, source, program, chat_id,
         )
 
         ok, message = self._send_telegram(token, chat_id, text, fmt, logger)
@@ -354,13 +381,23 @@ class Plugin:
         meta = EVENT_META.get(event, {"emoji": "•", "label": event})
         emoji = meta["emoji"]
         label = meta["label"]
-        channel = payload.get("channel_name") or "(unknown)"
-        stream = payload.get("stream_name")
+
+        # VOD events use a different payload shape: `content_name` instead
+        # of `channel_name`, and never carry `stream_name` / EPG data.
+        is_vod = event in VOD_EVENTS
+        if is_vod:
+            primary_label = "Title"
+            primary_value = payload.get("content_name") or "(unknown)"
+            stream = None
+        else:
+            primary_label = "Channel"
+            primary_value = payload.get("channel_name") or "(unknown)"
+            stream = payload.get("stream_name")
 
         if fmt == "HTML":
             lines = [
                 f"{emoji} <b>[{cls._escape_html(instance_label)}] {cls._escape_html(label)}</b>",
-                f"Channel: <code>{cls._escape_html(channel)}</code>",
+                f"{primary_label}: <code>{cls._escape_html(primary_value)}</code>",
             ]
             if stream:
                 lines.append(f"Stream: <code>{cls._escape_html(stream)}</code>")
@@ -372,7 +409,7 @@ class Plugin:
 
         lines = [
             f"{emoji} [{instance_label}] {label}",
-            f"Channel: {channel}",
+            f"{primary_label}: {primary_value}",
         ]
         if stream:
             lines.append(f"Stream: {stream}")
@@ -408,6 +445,47 @@ class Plugin:
             if not stream or not getattr(stream, "m3u_account", None):
                 return None
             return stream.m3u_account.name or None
+        except Exception:
+            return None
+
+    @staticmethod
+    def _lookup_vod_source(content_uuid: Optional[str]) -> Optional[str]:
+        """Return the M3U account name backing a VOD (movie / series /
+        episode) identified by `content_uuid`. The VOD event payload
+        identifies content by UUID without telling us which model it
+        belongs to, so we try Movie, Episode, then Series in turn.
+
+        Returns None for any failure so the alert never breaks.
+        """
+        if not content_uuid:
+            return None
+        try:
+            from apps.vod.models import (
+                Movie, Series, Episode,
+                M3UMovieRelation, M3USeriesRelation, M3UEpisodeRelation,
+            )
+            movie = Movie.objects.filter(uuid=content_uuid).first()
+            if movie:
+                rel = (
+                    M3UMovieRelation.objects.filter(movie=movie)
+                    .select_related("m3u_account").first()
+                )
+                return rel.m3u_account.name if rel and rel.m3u_account else None
+            episode = Episode.objects.filter(uuid=content_uuid).first()
+            if episode:
+                rel = (
+                    M3UEpisodeRelation.objects.filter(episode=episode)
+                    .select_related("m3u_account").first()
+                )
+                return rel.m3u_account.name if rel and rel.m3u_account else None
+            series = Series.objects.filter(uuid=content_uuid).first()
+            if series:
+                rel = (
+                    M3USeriesRelation.objects.filter(series=series)
+                    .select_related("m3u_account").first()
+                )
+                return rel.m3u_account.name if rel and rel.m3u_account else None
+            return None
         except Exception:
             return None
 

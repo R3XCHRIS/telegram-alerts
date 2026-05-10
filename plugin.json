@@ -1,6 +1,6 @@
 {
   "name": "Telegram Alerts",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Push Dispatcharr channel/stream events to a Telegram chat via a bot. Includes a manual test action and per-event toggles.",
   "author": "R3XCHRIS",
   "license": "MIT",
@@ -77,6 +77,20 @@
       "help_text": "Off by default — fires whenever a stream URL is swapped."
     },
     {
+      "id": "alert_vod_start",
+      "label": "Alert on VOD Start",
+      "type": "boolean",
+      "default": false,
+      "help_text": "Off by default — fires every time a movie/episode starts playing. Can be chatty in multi-user setups."
+    },
+    {
+      "id": "alert_vod_stop",
+      "label": "Alert on VOD Stop",
+      "type": "boolean",
+      "default": false,
+      "help_text": "Off by default — fires every time VOD playback ends."
+    },
+    {
       "id": "_section_enrichment",
       "label": "[ENRICHMENT]",
       "type": "info",
@@ -125,9 +139,9 @@
     },
     {
       "id": "on_event",
-      "label": "Handle channel/stream event (internal)",
-      "description": "Triggered by Dispatcharr on channel/stream events. Don't run manually.",
-      "events": ["channel_start", "channel_stop", "channel_reconnect", "stream_switch"]
+      "label": "Handle channel/stream/VOD event (internal)",
+      "description": "Triggered by Dispatcharr on channel/stream/VOD events. Don't run manually.",
+      "events": ["channel_start", "channel_stop", "channel_reconnect", "stream_switch", "vod_start", "vod_stop"]
     }
   ]
 }

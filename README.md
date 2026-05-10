@@ -3,7 +3,7 @@
 A [Dispatcharr](https://github.com/Dispatcharr/Dispatcharr) plugin that pushes channel and stream events to a Telegram chat via a bot.
 
 - **Manual test action** — verify your bot before trusting it with real alerts.
-- **Event-driven** — subscribes to Dispatcharr's `channel_start`, `channel_stop`, `channel_reconnect`, and `stream_switch` events. Per-event toggles let you control noise.
+- **Event-driven** — subscribes to Dispatcharr's `channel_start`, `channel_stop`, `channel_reconnect`, `stream_switch`, `vod_start`, and `vod_stop` events. Per-event toggles let you control noise.
 - **HTML formatting** with safe escaping; a plain-text fallback is also available.
 - **Optional enrichment** — opt-in toggles to include the channel's M3U source and the EPG "now playing" title.
 - **Zero external dependencies** — uses only the Python standard library.
@@ -74,7 +74,7 @@ You can send the alerts to either a personal DM with the bot or a group/channel.
 
 ## What gets sent
 
-Each alert is a short structured message. Example (HTML mode, both enrichment toggles on):
+Each alert is a short structured message. Example for a channel event (HTML mode, both enrichment toggles on):
 
 ```
 🔄 [Yoda] Channel reconnected
@@ -84,20 +84,29 @@ Source: MyIPTVProvider
 Now playing: NFL Live
 ```
 
+Example for a VOD event (HTML mode, **Include Stream Source** on):
+
+```
+🎬 [Yoda] VOD started
+Title: Inception
+Source: MyIPTVProvider
+```
+
 Field meanings:
 
 | Field | Source |
 |---|---|
-| Emoji + label | Per-event severity marker (▶ start, ⏹ stop, 🔄 reconnect, 🔀 switch, ✅ test) |
+| Emoji + label | Per-event severity marker (▶ start, ⏹ stop, 🔄 reconnect, 🔀 switch, 🎬 VOD start, 🛑 VOD stop, ✅ test) |
 | `[Yoda]` | The **Instance Label** setting |
-| Channel | `payload.channel_name` from Dispatcharr's event |
+| Channel | `payload.channel_name` (channel events only) |
+| Title | `payload.content_name` (VOD events only — movie or episode title) |
 | Stream  | `payload.stream_name` (only present for `stream_switch`) |
-| Source  | M3U account name of the channel's first configured stream — only when **Include Stream Source** is on |
-| Now playing | EPG title where `start_time ≤ now < end_time` — only when **Include Current EPG Program** is on |
+| Source  | M3U account name backing the channel or VOD — only when **Include Stream Source** is on |
+| Now playing | EPG title where `start_time ≤ now < end_time` — only when **Include Current EPG Program** is on, channels only (VODs have no EPG) |
 
 Optional fields are skipped silently when the lookup returns nothing (e.g. no EPG mapping), so messages stay tidy.
 
-Channel UUIDs are not included — Dispatcharr's event payload doesn't carry them.
+Channel UUIDs are not included — Dispatcharr's event payload doesn't carry them. VOD events do carry a `content_uuid`, used internally to look up the VOD's M3U source.
 
 ---
 
@@ -112,7 +121,9 @@ Channel UUIDs are not included — Dispatcharr's event payload doesn't carry the
 | Alert on Channel Stop | boolean | off | Noisy. |
 | Alert on Channel Reconnect | boolean | **on** | Useful warning signal. |
 | Alert on Stream Switch | boolean | off | Fires whenever a stream URL is swapped. |
-| Include Stream Source | boolean | off | Adds the M3U account name to each alert. One DB lookup per event. |
+| Alert on VOD Start | boolean | off | Fires every time a movie/episode starts playing. Chatty in multi-user setups. |
+| Alert on VOD Stop | boolean | off | Fires every time VOD playback ends. |
+| Include Stream Source | boolean | off | Adds the M3U account name to each alert. Channels look up via priority order; VODs look up via the Movie/Episode/Series M3U relation. One DB lookup per event. |
 | Include Current EPG Program | boolean | off | Adds the currently-airing program title. Requires the channel to have an EPG mapping. One DB lookup per event. |
 | Message Format | select | `HTML` | `HTML` or `plain`. |
 
@@ -162,6 +173,12 @@ The tests cover the pure helpers (token masking, HTML escaping, message formatti
 ---
 
 ## Changelog
+
+### 0.3.0
+- New events: subscribes to `vod_start` and `vod_stop`, with their own opt-in toggles. Both off by default.
+- VOD alerts use **Title:** for the headline (from `content_name`) instead of **Channel:**.
+- **Include Stream Source** now also enriches VOD alerts — looks up the M3U account via Movie/Episode/Series relations.
+- The Now-playing EPG enrichment is intentionally suppressed for VOD events (VODs don't have EPG data).
 
 ### 0.2.1
 - Fix: **Include Stream Source** now returns the channel's *highest-priority* configured stream (the one shown first in Dispatcharr's UI). Previously it returned an arbitrary stream — usually the lowest Stream PK, which on multi-source channels was rarely the user's #1.

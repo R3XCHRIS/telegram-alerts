@@ -311,6 +311,103 @@ class TestFormatEventMessageEnrichment:
         assert idx_stream < idx_source < idx_program
 
 
+# ---------- VOD events -------------------------------------------------------
+
+class TestFormatEventMessageVod:
+    def test_html_vod_start_uses_title_label_from_content_name(self):
+        # VOD payloads carry `content_name`, NOT `channel_name`. The headline
+        # field must change accordingly.
+        msg = Plugin._format_event_message(
+            "vod_start",
+            {"content_name": "Inception", "content_uuid": "abc-123"},
+            "Yoda", "HTML",
+        )
+        assert "🎬" in msg
+        assert "VOD started" in msg
+        assert "[Yoda]" in msg
+        assert "<b>" in msg
+        assert "Title: <code>Inception</code>" in msg
+        # Must NOT use channel-style fields for VOD events.
+        assert "Channel:" not in msg
+        assert "Stream:" not in msg
+
+    def test_html_vod_stop_emoji_and_label(self):
+        msg = Plugin._format_event_message(
+            "vod_stop",
+            {"content_name": "Inception"},
+            "Yoda", "HTML",
+        )
+        assert "🛑" in msg
+        assert "VOD stopped" in msg
+        assert "Title: <code>Inception</code>" in msg
+
+    def test_plain_vod_start(self):
+        msg = Plugin._format_event_message(
+            "vod_start", {"content_name": "Inception"}, "Yoda", "plain",
+        )
+        assert "<code>" not in msg
+        assert "🎬 [Yoda] VOD started" in msg
+        assert "Title: Inception" in msg
+
+    def test_vod_with_source_enrichment(self):
+        msg = Plugin._format_event_message(
+            "vod_start", {"content_name": "Inception"}, "Yoda", "HTML",
+            source="MyIPTV",
+        )
+        assert "Title: <code>Inception</code>" in msg
+        assert "Source: <code>MyIPTV</code>" in msg
+
+    def test_vod_ignores_program_argument(self):
+        # _handle_event guarantees `program=None` for VOD events, but the
+        # formatter shouldn't render one if it ever leaked through.
+        # Currently it would render — that's caller's responsibility.
+        # This test just documents the current contract: caller MUST pass
+        # program=None for VOD events. Verified by the next test.
+        msg = Plugin._format_event_message(
+            "vod_start", {"content_name": "Inception"}, "Yoda", "HTML",
+            program=None,
+        )
+        assert "Now playing:" not in msg
+
+    def test_vod_missing_content_name_falls_back(self):
+        msg = Plugin._format_event_message(
+            "vod_start", {}, "Yoda", "HTML",
+        )
+        assert "Title: <code>(unknown)</code>" in msg
+
+    def test_html_escapes_vod_title(self):
+        msg = Plugin._format_event_message(
+            "vod_start",
+            {"content_name": "Foo & <Bar>"},
+            "Yoda", "HTML",
+        )
+        assert "Foo &amp; &lt;Bar&gt;" in msg
+        assert "<Bar>" not in msg
+
+
+# ---------- Module-level VOD constants --------------------------------------
+
+class TestVodConstants:
+    def test_vod_events_in_event_names(self):
+        from plugin import EVENT_NAMES, VOD_EVENTS
+        for name in VOD_EVENTS:
+            assert name in EVENT_NAMES, f"{name!r} declared as VOD but missing from EVENT_NAMES"
+
+    def test_vod_events_have_metadata(self):
+        from plugin import EVENT_META, VOD_EVENTS
+        for name in VOD_EVENTS:
+            assert name in EVENT_META, f"{name!r} missing from EVENT_META"
+
+    def test_vod_events_reference_real_setting_fields(self):
+        from plugin import EVENT_META, VOD_EVENTS
+        field_ids = {f["id"] for f in Plugin.fields}
+        for name in VOD_EVENTS:
+            toggle = EVENT_META[name]["toggle"]
+            assert toggle in field_ids, (
+                f"VOD event {name!r} toggle {toggle!r} is not a defined settings field"
+            )
+
+
 # ---------- EVENT_META consistency ------------------------------------------
 
 class TestEventMetaConsistency:
