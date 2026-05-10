@@ -1,15 +1,36 @@
 # Telegram Alerts
 
-A [Dispatcharr](https://github.com/Dispatcharr/Dispatcharr) plugin that pushes channel and stream events to a Telegram chat via a bot.
+> [!WARNING]
+> ## ⚠ Requires a not-yet-released Dispatcharr fix to function
+>
+> Event-driven alerts in this plugin will **silently never fire** on the current released versions of Dispatcharr. The manual **Send Test** action works fine, which makes it look like the plugin is broken — but the failure is actually upstream in Dispatcharr's plugin event dispatch loop ([Dispatcharr/Dispatcharr#1231](https://github.com/Dispatcharr/Dispatcharr/issues/1231)).
+>
+> A one-line fix is open as [Dispatcharr/Dispatcharr#1232](https://github.com/Dispatcharr/Dispatcharr/pull/1232). Once it's merged and reaches a Dispatcharr release, this warning will be removed and `min_dispatcharr_version` in `plugin.json` will be bumped to that release.
+>
+> **Until then, you have two options:**
+>
+> 1. **Wait for the fix to land in a Dispatcharr release** (recommended for most users).
+> 2. **Hot-patch your container yourself** — works today, reverts on the next Watchtower / image update so you'd need to re-apply:
+>
+>    ```bash
+>    docker exec <container> sed -i \
+>      's|plugin.key|plugin["key"]|g; s|plugin.name|plugin["name"]|g' \
+>      /app/apps/connect/utils.py
+>    docker restart <container>
+>    ```
+>
+> If you install this plugin and only the **Send Test** button works while real channel/stream/VOD events produce nothing, you've hit this. It is **not** a bug in Telegram Alerts.
+
+---
+
+A [Dispatcharr](https://github.com/Dispatcharr/Dispatcharr) plugin that pushes channel, stream, and VOD events to a Telegram chat via a bot.
 
 - **Manual test action** — verify your bot before trusting it with real alerts.
 - **Event-driven** — subscribes to Dispatcharr's `channel_start`, `channel_stop`, `channel_reconnect`, `stream_switch`, `vod_start`, and `vod_stop` events. Per-event toggles let you control noise.
 - **HTML formatting** with safe escaping; a plain-text fallback is also available.
-- **Optional enrichment** — opt-in toggles to include the channel's M3U source and the EPG "now playing" title.
+- **Optional enrichment** — opt-in toggles to include the channel/VOD's M3U source and the EPG "now playing" title.
 - **Zero external dependencies** — uses only the Python standard library.
 - **Per-instance label** — tag every message with which Dispatcharr instance it came from.
-
-> Heads up: Telegram Alerts v0.1 is event-driven only. Scheduled health checks (M3U refresh failures, EPG fetch failures, disk usage) are planned for v0.2.
 
 ---
 
