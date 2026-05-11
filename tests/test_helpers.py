@@ -408,6 +408,308 @@ class TestVodConstants:
             )
 
 
+# ---------- Cron parsing -----------------------------------------------------
+
+class TestParseCron:
+    def test_valid_5_field(self):
+        assert Plugin._parse_cron("0 9 * * *") == ("0", "9", "*", "*", "*")
+
+    def test_valid_with_lists(self):
+        assert Plugin._parse_cron("*/15 0,12 * * 1-5") == ("*/15", "0,12", "*", "*", "1-5")
+
+    def test_too_few_fields(self):
+        import pytest
+        with pytest.raises(ValueError):
+            Plugin._parse_cron("0 9 *")
+
+    def test_too_many_fields(self):
+        import pytest
+        with pytest.raises(ValueError):
+            Plugin._parse_cron("0 9 * * * *")
+
+    def test_empty(self):
+        import pytest
+        with pytest.raises(ValueError):
+            Plugin._parse_cron("")
+
+
+# ---------- Window label -----------------------------------------------------
+
+import datetime as _dt
+
+
+class TestFormatWindowLabel:
+    def _delta_label(self, seconds: int, first: bool = False) -> str:
+        now = _dt.datetime(2026, 1, 1, 12, tzinfo=_dt.timezone.utc)
+        return Plugin._format_window_label(now - _dt.timedelta(seconds=seconds), now, first)
+
+    def test_minutes(self):
+        assert self._delta_label(60 * 30) == "last 30 min"
+
+    def test_hours(self):
+        assert self._delta_label(60 * 60 * 6) == "last 6h"
+
+    def test_days(self):
+        assert self._delta_label(60 * 60 * 24 * 7) == "last 7 days"
+
+    def test_weeks(self):
+        assert "weeks" in self._delta_label(60 * 60 * 24 * 30)
+
+    def test_first_report_suffix(self):
+        assert self._delta_label(60 * 60 * 24, first=True).endswith("(first report)")
+
+    def test_zero_window_does_not_negative(self):
+        # If somehow last_report_at == now, no negatives, no crash.
+        assert "last" in self._delta_label(0)
+
+
+# ---------- Format duration -------------------------------------------------
+
+class TestFormatDuration:
+    def test_seconds(self):
+        assert Plugin._format_duration(_dt.timedelta(seconds=45)) == "45s"
+
+    def test_minutes(self):
+        assert Plugin._format_duration(_dt.timedelta(minutes=12)) == "12m"
+
+    def test_hours(self):
+        assert Plugin._format_duration(_dt.timedelta(hours=4)) == "4h"
+
+    def test_days(self):
+        assert Plugin._format_duration(_dt.timedelta(days=3)) == "3d"
+
+    def test_negative_clamps_to_zero(self):
+        assert Plugin._format_duration(_dt.timedelta(seconds=-5)) == "0s"
+
+
+# ---------- _parse_iso -------------------------------------------------------
+
+class TestParseIso:
+    def test_none_returns_none(self):
+        assert Plugin._parse_iso(None) is None
+
+    def test_empty_returns_none(self):
+        assert Plugin._parse_iso("") is None
+
+    def test_garbage_returns_none(self):
+        assert Plugin._parse_iso("not a timestamp") is None
+
+    def test_naive_timestamp_gets_utc(self):
+        dt = Plugin._parse_iso("2026-05-11T09:00:00")
+        assert dt is not None
+        assert dt.tzinfo is not None
+
+    def test_round_trips_with_isoformat(self):
+        original = _dt.datetime(2026, 5, 11, 9, 0, tzinfo=_dt.timezone.utc)
+        assert Plugin._parse_iso(original.isoformat()) == original
+
+
+# ---------- Report formatter -------------------------------------------------
+
+def _now():
+    return _dt.datetime(2026, 5, 11, 9, 0, tzinfo=_dt.timezone.utc)
+
+
+def _base_report():
+    now = _now()
+    return {
+        "now": now,
+        "window_start": now - _dt.timedelta(days=1),
+        "is_first_report": False,
+        "speedtest_ran": False,
+    }
+
+
+class TestFormatReportMessage:
+    def test_html_header_uses_emoji_and_dispatcharr_label(self):
+        msg = Plugin._format_report_message(_base_report(), "Yoda", "HTML")
+        assert "📊" in msg
+        assert "<b>[Yoda] Dispatcharr report — 2026-05-11 09:00</b>" in msg
+
+    def test_plain_header_strips_tags(self):
+        msg = Plugin._format_report_message(_base_report(), "Yoda", "plain")
+        assert "<b>" not in msg
+        assert "📊 [Yoda] Dispatcharr report — 2026-05-11 09:00" in msg
+
+    def test_html_escapes_instance_label(self):
+        msg = Plugin._format_report_message(_base_report(), "<prod>", "HTML")
+        assert "&lt;prod&gt;" in msg
+        assert "<prod>" not in msg.split("</b>")[0]
+
+    def test_network_section_renders_ip_and_geo(self):
+        report = _base_report()
+        report["public_ip"] = "203.0.113.42"
+        report["geo"] = {"city": "Brisbane", "region": "QLD", "country": "Australia", "isp": "Telstra"}
+        msg = Plugin._format_report_message(report, "Yoda", "HTML")
+        assert "🌐" in msg
+        assert "<code>203.0.113.42</code>" in msg
+        assert "Brisbane" in msg
+        assert "Telstra" in msg
+
+    def test_network_section_ip_only_when_geo_missing(self):
+        report = _base_report()
+        report["public_ip"] = "203.0.113.42"
+        report["geo"] = None
+        msg = Plugin._format_report_message(report, "Yoda", "HTML")
+        assert "<code>203.0.113.42</code>" in msg
+        assert "Brisbane" not in msg
+
+    def test_network_section_handles_ip_lookup_failure(self):
+        report = _base_report()
+        report["public_ip"] = None
+        msg = Plugin._format_report_message(report, "Yoda", "HTML")
+        assert "lookup failed" in msg
+
+    def test_speedtest_results_when_run(self):
+        report = _base_report()
+        report["public_ip"] = "1.2.3.4"
+        report["speedtest_ran"] = True
+        report["speedtest_down_mbps"] = 287.4
+        report["speedtest_up_mbps"] = 42.1
+        msg = Plugin._format_report_message(report, "Yoda", "HTML")
+        assert "287.4 Mbps" in msg
+        assert "42.1 Mbps" in msg
+
+    def test_speedtest_skipped_message(self):
+        report = _base_report()
+        report["public_ip"] = "1.2.3.4"
+        report["speedtest_ran"] = False
+        report["speedtest_skipped_reason"] = "cooldown — last test 2h ago"
+        msg = Plugin._format_report_message(report, "Yoda", "HTML")
+        assert "Speedtest: skipped" in msg
+        assert "2h ago" in msg
+
+    def test_speedtest_failed_renders_failed_label(self):
+        report = _base_report()
+        report["public_ip"] = "1.2.3.4"
+        report["speedtest_ran"] = True
+        report["speedtest_down_mbps"] = None
+        report["speedtest_up_mbps"] = None
+        msg = Plugin._format_report_message(report, "Yoda", "HTML")
+        assert "Down: <code>(failed)</code>" in msg
+        assert "Up: <code>(failed)</code>" in msg
+
+    def test_activity_section_with_top_channels(self):
+        report = _base_report()
+        report["activity"] = {
+            "channel_plays": 47,
+            "vod_plays": 6,
+            "switches": 2,
+            "errors": 1,
+            "top_channels": [("ESPN", 12), ("CNN", 8), ("Sky News", 5)],
+        }
+        msg = Plugin._format_report_message(report, "Yoda", "HTML")
+        assert "📺" in msg
+        assert "47 channel plays" in msg
+        assert "<code>ESPN</code>" in msg
+        assert "(12)" in msg
+        assert "6 VOD plays" in msg
+        assert "2 stream switches" in msg
+        assert "1 errors / failovers" in msg
+
+    def test_activity_section_zero_plays(self):
+        report = _base_report()
+        report["activity"] = {
+            "channel_plays": 0, "vod_plays": 0, "switches": 0, "errors": 0, "top_channels": [],
+        }
+        msg = Plugin._format_report_message(report, "Yoda", "HTML")
+        assert "0 channel plays" in msg
+        # switches/errors only mentioned when non-zero
+        assert "stream switches" not in msg
+        assert "errors / failovers" not in msg
+
+    def test_activity_section_no_data(self):
+        report = _base_report()
+        report["activity"] = {}
+        msg = Plugin._format_report_message(report, "Yoda", "HTML")
+        assert "no data available" in msg
+
+    def test_activity_section_html_escapes_top_channel_name(self):
+        report = _base_report()
+        report["activity"] = {
+            "channel_plays": 1, "vod_plays": 0, "switches": 0, "errors": 0,
+            "top_channels": [("<scary>", 1)],
+        }
+        msg = Plugin._format_report_message(report, "Yoda", "HTML")
+        assert "&lt;scary&gt;" in msg
+        assert "<scary>" not in msg
+
+    def test_sources_section_m3u_all_enabled(self):
+        report = _base_report()
+        report["sources"] = {"m3u_total": 3, "m3u_enabled": 3, "epg_total": 2, "epg_last_refresh": _now() - _dt.timedelta(hours=4)}
+        msg = Plugin._format_report_message(report, "Yoda", "HTML")
+        assert "📡" in msg
+        assert "3 M3U accounts (all enabled)" in msg
+        assert "2 EPG sources" in msg
+        assert "4h ago" in msg
+
+    def test_sources_section_partial_enabled(self):
+        report = _base_report()
+        report["sources"] = {"m3u_total": 3, "m3u_enabled": 2}
+        msg = Plugin._format_report_message(report, "Yoda", "HTML")
+        assert "3 M3U accounts (2 enabled)" in msg
+
+    def test_sources_section_zero_configured(self):
+        report = _base_report()
+        report["sources"] = {"m3u_total": 0, "epg_total": 0}
+        msg = Plugin._format_report_message(report, "Yoda", "HTML")
+        assert "No M3U accounts" in msg
+        assert "No EPG sources" in msg
+
+    def test_first_report_window_label_marked(self):
+        report = _base_report()
+        report["is_first_report"] = True
+        report["activity"] = {"channel_plays": 0, "vod_plays": 0, "switches": 0, "errors": 0, "top_channels": []}
+        msg = Plugin._format_report_message(report, "Yoda", "HTML")
+        assert "(first report)" in msg
+
+    def test_sections_omitted_when_keys_absent(self):
+        # When a section's key isn't in the dict (toggle was off), no section
+        # rendered. Header always renders.
+        report = _base_report()
+        msg = Plugin._format_report_message(report, "Yoda", "HTML")
+        assert "📊" in msg
+        assert "🌐" not in msg
+        assert "📺" not in msg
+        assert "📡" not in msg
+
+
+# ---------- Manifest sanity for v0.4.0 --------------------------------------
+
+class TestManifestV04:
+    def test_report_action_dispatches_send_report_now(self):
+        action_ids = {a["id"] for a in Plugin.actions}
+        for required in (
+            "send_test", "send_report_now", "apply_schedule",
+            "remove_schedule", "schedule_status", "on_event",
+        ):
+            assert required in action_ids, f"Action {required!r} missing"
+
+    def test_report_settings_all_present(self):
+        field_ids = {f["id"] for f in Plugin.fields}
+        for required in (
+            "report_enabled", "report_cron", "report_chat_id",
+            "report_include_network", "report_include_speedtest",
+            "report_speedtest_cooldown_hours",
+            "report_include_activity", "report_include_sources",
+        ):
+            assert required in field_ids, f"Setting {required!r} missing"
+
+    def test_report_cron_default_is_9am_daily(self):
+        cron_field = next(f for f in Plugin.fields if f["id"] == "report_cron")
+        assert cron_field["default"] == "0 9 * * *"
+
+    def test_speedtest_cooldown_default_is_6_hours(self):
+        cd_field = next(f for f in Plugin.fields if f["id"] == "report_speedtest_cooldown_hours")
+        assert cd_field["default"] == 6
+
+    def test_report_actions_descriptions_are_one_line(self):
+        for action in Plugin.actions:
+            assert "\n" not in action["description"], (
+                f"Action {action['id']!r} description has a newline"
+            )
+
+
 # ---------- EVENT_META consistency ------------------------------------------
 
 class TestEventMetaConsistency:

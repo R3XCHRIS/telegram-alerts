@@ -23,10 +23,11 @@
 
 ---
 
-A [Dispatcharr](https://github.com/Dispatcharr/Dispatcharr) plugin that pushes channel, stream, and VOD events to a Telegram chat via a bot.
+A [Dispatcharr](https://github.com/Dispatcharr/Dispatcharr) plugin that pushes channel, stream, and VOD events to a Telegram chat via a bot — plus an optional cron-driven daily report covering public IP, geo, bandwidth, activity stats, and source health.
 
 - **Manual test action** — verify your bot before trusting it with real alerts.
 - **Event-driven** — subscribes to Dispatcharr's `channel_start`, `channel_stop`, `channel_reconnect`, `stream_switch`, `vod_start`, and `vod_stop` events. Per-event toggles let you control noise.
+- **Daily report** (optional) — public IP + geo, Cloudflare speedtest, activity stats since last report, and M3U/EPG source health. Cron-scheduled via Celery beat.
 - **HTML formatting** with safe escaping; a plain-text fallback is also available.
 - **Optional enrichment** — opt-in toggles to include the channel/VOD's M3U source and the EPG "now playing" title.
 - **Zero external dependencies** — uses only the Python standard library.
@@ -147,6 +148,14 @@ Channel UUIDs are not included — Dispatcharr's event payload doesn't carry the
 | Include Stream Source | boolean | off | Adds the M3U account name to each alert. Channels look up via priority order; VODs look up via the Movie/Episode/Series M3U relation. One DB lookup per event. |
 | Include Current EPG Program | boolean | off | Adds the currently-airing program title. Requires the channel to have an EPG mapping. One DB lookup per event. |
 | Message Format | select | `HTML` | `HTML` or `plain`. |
+| **Enable Daily Report** | boolean | off | Master toggle for the cron-driven daily report. After turning on, click **Apply Schedule** in the Actions tab to register the cron. |
+| Report Schedule (cron) | string | `0 9 * * *` | 5-field cron. Default = every day 09:00. |
+| Report Chat ID | string | (empty) | Send report to a different chat than per-event alerts. Blank = use main Chat ID. |
+| Include Network Section | boolean | on | Public IP + geographic location lookup. |
+| Include Speedtest | boolean | on | Down/up bandwidth via Cloudflare. ~150 MB per test, respects the cooldown below. |
+| Speedtest Cooldown (hours) | number | `6` | Minimum hours between speedtests. Lets you run reports hourly without burning bandwidth. |
+| Include Activity Section | boolean | on | Channel plays, top channels, VOD plays, errors, stream switches since the previous report. |
+| Include Sources Section | boolean | on | M3U account count + EPG source freshness. |
 
 ---
 
@@ -155,7 +164,11 @@ Channel UUIDs are not included — Dispatcharr's event payload doesn't carry the
 | Action | Description |
 |---|---|
 | **Send Test** | Posts a one-off "Telegram Alerts test" message. Validates token, chat ID, and formatting end-to-end. |
-| Handle channel/stream event (internal) | Dispatcharr fires this automatically — you should never click it. Hidden in normal use. |
+| **Send Report Now** | Build and send a daily report immediately. Window = since the previous report. Advances the "last report" marker on successful send. |
+| **Apply Schedule** | Register or update the cron task in `django-celery-beat`. Re-click after changing any report setting (snapshots fresh settings into the task). |
+| **Show Schedule Status** | Show the registered cron, last run, total runs. |
+| **Remove Schedule** | Unregister the periodic task. |
+| Handle channel/stream/VOD event (internal) | Dispatcharr fires this automatically — you should never click it. Hidden in normal use. |
 
 ---
 
@@ -193,7 +206,50 @@ The tests cover the pure helpers (token masking, HTML escaping, message formatti
 
 ---
 
+## Daily report
+
+Off by default. To enable:
+
+1. Tick **Enable Daily Report** in Settings, pick your cron in **Report Schedule** (default `0 9 * * *` = every day at 09:00).
+2. Optionally toggle off whichever sections you don't want.
+3. Save.
+4. Switch to the Actions tab, click **Apply Schedule** — that registers (or updates) a `django-celery-beat` periodic task.
+5. Click **Send Report Now** once to verify the format end-to-end.
+
+### Window semantics
+
+The activity stats window is **"since the previous report"**, not a fixed 24 hours. So:
+
+- **Daily cron** → each report covers the last day.
+- **Weekly cron** → each report covers the last week.
+- **Hourly cron** → each report covers the last hour. Most hours show zero activity — that's signal too.
+- **Manual run** → covers everything since the last (manual or scheduled) report.
+
+The first ever report has no baseline and defaults to "last 24h", labelled `(first report)` in the message.
+
+If a Telegram send fails, the "last report" timestamp is **not** advanced — so the next attempt picks up the missed window.
+
+### Speedtest details
+
+- Down: ~100 MB GET from Cloudflare's `speed.cloudflare.com/__down`.
+- Up: ~25 MB POST to `speed.cloudflare.com/__up`.
+- Together ~150 MB per test. Run frequency capped by **Speedtest Cooldown (hours)** (default 6) regardless of cron tightness — so an hourly cron still only tests bandwidth 4× per day.
+- Single-stream measurement — less precise than multi-stream tools like Ookla but adequate for daily trend detection. No external binaries required.
+
+### Persisted state
+
+The plugin writes a small `.state.json` file alongside its code (e.g. `/data/plugins/telegram-alerts/.state.json`) to track `last_report_at` and `last_speedtest_at`. Losing this file (manual delete, container rebuild) is non-fatal — the next report falls back to the 24h default window.
+
+---
+
 ## Changelog
+
+### 0.4.0
+- New optional **daily report** feature: cron-driven digest covering public IP + geographic location, Cloudflare speedtest (down/up), activity stats (channel plays, top 3 channels, VOD plays, errors, stream switches), and source health (M3U accounts, EPG freshness).
+- Activity window = "since previous report" — same cron pattern works at any interval from hourly to weekly.
+- Speedtest cooldown setting decouples bandwidth use from cron frequency.
+- All sections are individually toggleable. None of the existing per-event alert toggles affect the report's stats counting.
+- New actions: **Send Report Now**, **Apply Schedule**, **Show Schedule Status**, **Remove Schedule**. The scheduling uses `django-celery-beat` the same way VOD2MLIB does.
 
 ### 0.3.0
 - New events: subscribes to `vod_start` and `vod_stop`, with their own opt-in toggles. Both off by default.

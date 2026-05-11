@@ -1,7 +1,7 @@
 {
   "name": "Telegram Alerts",
-  "version": "0.3.0",
-  "description": "Push Dispatcharr channel/stream events to a Telegram chat via a bot. Includes a manual test action and per-event toggles.",
+  "version": "0.4.0",
+  "description": "Push Dispatcharr channel/stream/VOD events to a Telegram chat via a bot. Includes a manual test action, per-event toggles, and an optional cron-driven daily report (public IP + geo + speedtest + activity + source health).",
   "author": "R3XCHRIS",
   "license": "MIT",
   "min_dispatcharr_version": "v0.20.0",
@@ -126,6 +126,69 @@
         {"value": "plain", "label": "Plain text"}
       ],
       "help_text": "HTML uses Telegram's HTML parse mode. Plain disables formatting."
+    },
+    {
+      "id": "_section_reports",
+      "label": "[DAILY REPORT]",
+      "type": "info",
+      "description": "Optional cron-driven digest. Stats window = since previous report, so a weekly cron gets a week of stats."
+    },
+    {
+      "id": "report_enabled",
+      "label": "Enable Daily Report",
+      "type": "boolean",
+      "default": false,
+      "help_text": "Master toggle. When on, click 'Apply Schedule' below to register the cron."
+    },
+    {
+      "id": "report_cron",
+      "label": "Report Schedule (cron)",
+      "type": "string",
+      "default": "0 9 * * *",
+      "help_text": "5-field cron: 'minute hour day-of-month month day-of-week'. Default '0 9 * * *' = every day at 09:00. Used by Apply Schedule."
+    },
+    {
+      "id": "report_chat_id",
+      "label": "Report Chat ID (optional)",
+      "type": "string",
+      "default": "",
+      "placeholder": "leave blank to use main Chat ID",
+      "help_text": "Send the daily report to a different chat than per-event alerts. Leave blank to use the main Chat ID."
+    },
+    {
+      "id": "report_include_network",
+      "label": "Include Network Section",
+      "type": "boolean",
+      "default": true,
+      "help_text": "Public IP + geographic location lookup."
+    },
+    {
+      "id": "report_include_speedtest",
+      "label": "Include Speedtest",
+      "type": "boolean",
+      "default": true,
+      "help_text": "Down/up bandwidth measurement via Cloudflare (~150 MB per test). Only runs when the Network section is also on, and respects the cooldown below."
+    },
+    {
+      "id": "report_speedtest_cooldown_hours",
+      "label": "Speedtest Cooldown (hours)",
+      "type": "number",
+      "default": 6,
+      "help_text": "Minimum hours between speedtest runs. Stops hourly crons from burning bandwidth. Other report sections still update every tick."
+    },
+    {
+      "id": "report_include_activity",
+      "label": "Include Activity Section",
+      "type": "boolean",
+      "default": true,
+      "help_text": "Channel plays, top channels, VOD plays, errors, stream switches since the previous report."
+    },
+    {
+      "id": "report_include_sources",
+      "label": "Include Sources Section",
+      "type": "boolean",
+      "default": true,
+      "help_text": "M3U account count and EPG source freshness."
     }
   ],
   "actions": [
@@ -136,6 +199,43 @@
       "button_label": "Send Test",
       "button_variant": "filled",
       "button_color": "blue"
+    },
+    {
+      "id": "send_report_now",
+      "label": "[REPORT] Send report now",
+      "description": "Build and send a daily report immediately. Window = since the previous report.",
+      "button_label": "Send Report",
+      "button_variant": "filled",
+      "button_color": "blue"
+    },
+    {
+      "id": "apply_schedule",
+      "label": "[REPORT] Apply / Update schedule",
+      "description": "Register or update the cron task. Re-click after changing any report setting.",
+      "button_label": "Apply",
+      "button_variant": "outline",
+      "button_color": "blue"
+    },
+    {
+      "id": "schedule_status",
+      "label": "[REPORT] Show schedule status",
+      "description": "Show registered cron, last run, total runs.",
+      "button_label": "Status",
+      "button_variant": "outline",
+      "button_color": "blue"
+    },
+    {
+      "id": "remove_schedule",
+      "label": "[REPORT] Remove schedule",
+      "description": "Unregister the periodic report task.",
+      "button_label": "Remove",
+      "button_variant": "outline",
+      "button_color": "orange",
+      "confirm": {
+        "required": true,
+        "title": "Remove daily report schedule?",
+        "message": "This unregisters the periodic task. You can re-create it any time with Apply."
+      }
     },
     {
       "id": "on_event",
