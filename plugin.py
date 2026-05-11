@@ -80,6 +80,8 @@ class Plugin:
         "Includes a manual test action, per-event toggles, and an optional "
         "cron-driven daily report (public IP + geo + speedtest + activity + source health)."
     )
+    author = "R3XCHRIS"
+    help_url = "https://github.com/R3XCHRIS/telegram-alerts#readme"
 
     # Identifiers for the periodic-report Celery task and its django-celery-beat row.
     SCHEDULE_TASK_NAME = "telegram_alerts.daily_report"

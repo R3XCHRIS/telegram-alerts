@@ -6,6 +6,7 @@
   "license": "MIT",
   "min_dispatcharr_version": "v0.20.0",
   "repo_url": "https://github.com/R3XCHRIS/telegram-alerts",
+  "help_url": "https://github.com/R3XCHRIS/telegram-alerts#readme",
   "fields": [
     {
       "id": "_about",

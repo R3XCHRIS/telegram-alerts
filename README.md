@@ -1,4 +1,6 @@
-# Telegram Alerts
+<img src="logo.png" align="right" width="128" alt="Dispatcharr Telegram Alerts logo" />
+
+# Dispatcharr Telegram Alerts
 
 > [!WARNING]
 > ## ⚠ Requires a not-yet-released Dispatcharr fix to function
