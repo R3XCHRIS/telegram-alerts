@@ -1,6 +1,11 @@
 """
 Telegram Alerts — Dispatcharr plugin
 (slug: telegram-alerts)
+v0.4.3 — geo lookup switched from ipapi.co (which started 403-ing
+         after a handful of probes) to ipinfo.io. Country is now
+         rendered as a flag emoji alongside city/region. Message
+         format tightened with em-dash and middot separators.
+
 v0.4.2 — speedtest download fix: Cloudflare rejects single requests
          over ~75 MB with HTTP 403, so the v0.4.1 UA fix only got us
          past one of two filters. Now chunks the download into 4×25 MB
@@ -64,7 +69,11 @@ HTTP_TIMEOUT_SECS = 10
 # ----- Daily report constants ------------------------------------------------
 
 IPIFY_URL = "https://api.ipify.org?format=json"
-IPAPI_TEMPLATE = "https://ipapi.co/{ip}/json/"
+# ipinfo.io free tier: 50k/month per IP, HTTPS, no auth required. Returns
+# 2-letter country code (handy for the flag emoji helper). Replaced
+# ipapi.co (used in v0.4.0–0.4.2) which rate-limited us at 403 after a
+# handful of probes.
+IPINFO_TEMPLATE = "https://ipinfo.io/{ip}/json"
 SPEEDTEST_DOWN_URL = "https://speed.cloudflare.com/__down?bytes={bytes}"
 SPEEDTEST_UP_URL = "https://speed.cloudflare.com/__up"
 # Cloudflare's /__down rejects single requests over ~75 MB with HTTP 403
@@ -100,7 +109,7 @@ class Plugin:
     """Send Dispatcharr alerts to a Telegram chat."""
 
     name = "Telegram Alerts"
-    version = "0.4.2"
+    version = "0.4.3"
     description = (
         "Push Dispatcharr channel/stream/VOD events to a Telegram chat via a bot. "
         "Includes a manual test action, per-event toggles, and an optional "
@@ -968,19 +977,41 @@ class Plugin:
         return None
 
     @classmethod
-    def _lookup_geo(cls, ip: str) -> Optional[Dict[str, str]]:
+    def _lookup_geo(cls, ip: str) -> Optional[Dict[str, Optional[str]]]:
+        """Resolve an IPv4/IPv6 address to a coarse location via ipinfo.io.
+        Returns None on any failure. The returned dict contains:
+          city, region — strings or None
+          country_code — 2-letter ISO code (used for the flag emoji) or None
+          isp — the org name with the leading 'AS<digits> ' stripped, or None
+        """
         if not ip:
             return None
-        data = cls._http_get_json(IPAPI_TEMPLATE.format(ip=urllib.parse.quote(ip)))
-        if not isinstance(data, dict) or data.get("error"):
+        data = cls._http_get_json(IPINFO_TEMPLATE.format(ip=urllib.parse.quote(ip)))
+        if not isinstance(data, dict) or "error" in data:
             return None
-        # ipapi.co returns city, region, country_name, org (ISP), etc.
+        # ipinfo's `org` is shaped "AS9009 M247 Europe SRL" — drop the AS prefix.
+        org = (data.get("org") or "").strip()
+        isp = re.sub(r"^AS\d+\s+", "", org) if org else ""
+        country_code = (data.get("country") or "").strip().upper()
         return {
             "city": (data.get("city") or "").strip() or None,
             "region": (data.get("region") or "").strip() or None,
-            "country": (data.get("country_name") or "").strip() or None,
-            "isp": (data.get("org") or "").strip() or None,
+            "country_code": country_code or None,
+            "isp": isp or None,
         }
+
+    @staticmethod
+    def _country_code_to_flag(code: Optional[str]) -> str:
+        """Convert a 2-letter ISO country code to its flag emoji using
+        Unicode regional indicator symbols. Returns "" on any non-2-letter
+        input so callers can safely concatenate."""
+        if not code or len(code) != 2 or not code.isalpha():
+            return ""
+        upper = code.upper()
+        return (
+            chr(0x1F1E6 + ord(upper[0]) - ord("A"))
+            + chr(0x1F1E6 + ord(upper[1]) - ord("A"))
+        )
 
     @staticmethod
     def _speedtest_download() -> Optional[float]:
@@ -1196,15 +1227,13 @@ class Plugin:
             ip = report.get("public_ip")
             geo = report.get("geo") or {}
             if ip:
-                loc_bits = [b for b in (geo.get("city"), geo.get("region"), geo.get("country")) if b]
+                flag = cls._country_code_to_flag(geo.get("country_code"))
+                loc_bits = [b for b in (geo.get("city"), geo.get("region")) if b]
                 loc = ", ".join(loc_bits)
-                isp = geo.get("isp")
-                tail_parts = []
-                if loc:
-                    tail_parts.append(loc)
-                if isp:
-                    tail_parts.append(isp)
-                tail = f" ({'; '.join(tail_parts)})" if tail_parts else ""
+                location_part = f"{flag} {loc}".strip() if (flag or loc) else ""
+                isp = (geo.get("isp") or "").strip()
+                detail_parts = [p for p in (location_part, isp) if p]
+                tail = " — " + " · ".join(detail_parts) if detail_parts else ""
                 lines.append(f"IP: {code(ip)}{tail}")
             else:
                 lines.append("IP: (lookup failed)")

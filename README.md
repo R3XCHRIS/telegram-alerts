@@ -247,6 +247,11 @@ The plugin writes a small `.state.json` file alongside its code (e.g. `/data/plu
 
 ## Changelog
 
+### 0.4.3
+- Geo lookup switched from `ipapi.co` to `ipinfo.io` — ipapi was returning HTTP 403 after a handful of probes (likely free-tier per-IP rate limit). ipinfo gives 50k/month per IP with no auth.
+- Network section now includes a **country flag emoji** derived from the 2-letter country code (e.g. 🇬🇧 London, England). The full country name is no longer rendered — the flag carries the same information and is more visually scannable.
+- Message format tightened: em-dash separates IP from details, middot separates location from ISP.
+
 ### 0.4.2
 - Fix: **Speedtest download was still failing** in v0.4.1. Cloudflare's `/__down` rejects single requests over ~75 MB with HTTP 403 (anti-abuse), separate from the User-Agent filter v0.4.1 fixed. Now chunks the download into 4×25 MB sequential GETs — same pattern browser-based speed tests use. Aggregate Mbps = total bytes / total elapsed.
 

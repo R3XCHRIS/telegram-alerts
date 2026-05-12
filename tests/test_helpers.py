@@ -536,15 +536,29 @@ class TestFormatReportMessage:
         assert "&lt;prod&gt;" in msg
         assert "<prod>" not in msg.split("</b>")[0]
 
-    def test_network_section_renders_ip_and_geo(self):
+    def test_network_section_renders_ip_geo_and_flag(self):
         report = _base_report()
         report["public_ip"] = "203.0.113.42"
-        report["geo"] = {"city": "Brisbane", "region": "QLD", "country": "Australia", "isp": "Telstra"}
+        report["geo"] = {
+            "city": "Brisbane", "region": "Queensland",
+            "country_code": "AU", "isp": "Telstra",
+        }
         msg = Plugin._format_report_message(report, "Yoda", "HTML")
         assert "🌐" in msg
         assert "<code>203.0.113.42</code>" in msg
-        assert "Brisbane" in msg
+        assert "🇦🇺" in msg, f"Expected AU flag in message, got: {msg!r}"
+        assert "Brisbane, Queensland" in msg
         assert "Telstra" in msg
+
+    def test_network_section_uses_em_dash_separator(self):
+        # New format: "IP: <ip> — 🇦🇺 city, region · ISP"
+        report = _base_report()
+        report["public_ip"] = "1.2.3.4"
+        report["geo"] = {"city": "X", "country_code": "AU", "isp": "Y"}
+        msg = Plugin._format_report_message(report, "Yoda", "HTML")
+        # Em-dash separates IP from details; middot separates location from ISP.
+        assert " — " in msg
+        assert " · " in msg
 
     def test_network_section_ip_only_when_geo_missing(self):
         report = _base_report()
@@ -553,6 +567,18 @@ class TestFormatReportMessage:
         msg = Plugin._format_report_message(report, "Yoda", "HTML")
         assert "<code>203.0.113.42</code>" in msg
         assert "Brisbane" not in msg
+        # No em-dash tail when no geo info
+        assert "<code>203.0.113.42</code> — " not in msg
+
+    def test_network_section_partial_geo_no_country_code(self):
+        # If ipinfo returns no country code, just render city/region without a flag.
+        report = _base_report()
+        report["public_ip"] = "1.2.3.4"
+        report["geo"] = {"city": "X", "country_code": None, "isp": "Y"}
+        msg = Plugin._format_report_message(report, "Yoda", "HTML")
+        # Flag absent; city + ISP still present.
+        assert "🇦" not in msg  # no regional indicator letters
+        assert "X" in msg and "Y" in msg
 
     def test_network_section_handles_ip_lookup_failure(self):
         report = _base_report()
@@ -698,6 +724,41 @@ class TestManifestV04:
     def test_report_timezone_default_is_blank_meaning_utc(self):
         tz_field = next(f for f in Plugin.fields if f["id"] == "report_timezone")
         assert tz_field["default"] == ""
+
+
+# ---------- Country code → flag emoji ---------------------------------------
+
+class TestCountryCodeToFlag:
+    def test_gb(self):
+        assert Plugin._country_code_to_flag("GB") == "🇬🇧"
+
+    def test_au(self):
+        assert Plugin._country_code_to_flag("AU") == "🇦🇺"
+
+    def test_us(self):
+        assert Plugin._country_code_to_flag("US") == "🇺🇸"
+
+    def test_lowercase_uppercased(self):
+        assert Plugin._country_code_to_flag("gb") == "🇬🇧"
+
+    def test_none_returns_empty(self):
+        assert Plugin._country_code_to_flag(None) == ""
+
+    def test_empty_string_returns_empty(self):
+        assert Plugin._country_code_to_flag("") == ""
+
+    def test_one_letter_returns_empty(self):
+        assert Plugin._country_code_to_flag("G") == ""
+
+    def test_three_letters_returns_empty(self):
+        # ISO 3166-1 alpha-3 codes (e.g. "GBR") aren't supported.
+        assert Plugin._country_code_to_flag("GBR") == ""
+
+    def test_digits_returns_empty(self):
+        assert Plugin._country_code_to_flag("12") == ""
+
+    def test_mixed_alphanum_returns_empty(self):
+        assert Plugin._country_code_to_flag("G1") == ""
 
     def test_report_cron_default_is_9am_daily(self):
         cron_field = next(f for f in Plugin.fields if f["id"] == "report_cron")
