@@ -688,12 +688,16 @@ class TestManifestV04:
     def test_report_settings_all_present(self):
         field_ids = {f["id"] for f in Plugin.fields}
         for required in (
-            "report_enabled", "report_cron", "report_chat_id",
+            "report_enabled", "report_cron", "report_timezone", "report_chat_id",
             "report_include_network", "report_include_speedtest",
             "report_speedtest_cooldown_hours",
             "report_include_activity", "report_include_sources",
         ):
             assert required in field_ids, f"Setting {required!r} missing"
+
+    def test_report_timezone_default_is_blank_meaning_utc(self):
+        tz_field = next(f for f in Plugin.fields if f["id"] == "report_timezone")
+        assert tz_field["default"] == ""
 
     def test_report_cron_default_is_9am_daily(self):
         cron_field = next(f for f in Plugin.fields if f["id"] == "report_cron")

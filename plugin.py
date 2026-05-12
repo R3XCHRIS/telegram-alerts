@@ -1,9 +1,17 @@
 """
 Telegram Alerts — Dispatcharr plugin
 (slug: telegram-alerts)
-v0.4.0 — adds optional daily report (public IP + geo + speedtest +
-         activity + source health), with Celery-beat cron scheduling
-         and a "since previous report" stats window.
+v0.4.1 — fixes for v0.4.0 daily report:
+           * Activity section was always empty: SystemEvent's field is
+             `timestamp`, not `created_at`. The bare except hid the
+             FieldError and the section silently rendered "no data".
+           * Speedtest download was always (failed): Cloudflare's
+             /__down rejects non-browser User-Agents with HTTP 403.
+             Now uses a Mozilla UA for both the speedtest endpoints
+             and the IP/geo lookups.
+           * Adds report_timezone setting (IANA names, e.g.
+             Europe/London) so the cron is interpreted in your local
+             time instead of always UTC.
 
 MIT License
 Copyright (c) 2026 R3XCHRIS
@@ -59,6 +67,14 @@ SPEEDTEST_UP_BYTES = 25_000_000     # 25 MB (uploads are slower; keep under 30s 
 SPEEDTEST_TIMEOUT_SECS = 120
 REPORT_HTTP_TIMEOUT_SECS = 15
 
+# Cloudflare's speed.cloudflare.com endpoints reject GETs with arbitrary
+# User-Agent strings (HTTP 403). Use a browser-like UA for outbound HTTP
+# from the report machinery. Same UA for ipify/ipapi for consistency.
+REPORT_USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+)
+
 # Path to a small state file alongside the plugin code. Used to persist
 # last_report_at and last_speedtest_at across container restarts without
 # muddying PluginConfig.settings (which the user edits via the UI).
@@ -74,7 +90,7 @@ class Plugin:
     """Send Dispatcharr alerts to a Telegram chat."""
 
     name = "Telegram Alerts"
-    version = "0.4.0"
+    version = "0.4.1"
     description = (
         "Push Dispatcharr channel/stream/VOD events to a Telegram chat via a bot. "
         "Includes a manual test action, per-event toggles, and an optional "
@@ -235,7 +251,15 @@ class Plugin:
             "label": "Report Schedule (cron)",
             "type": "string",
             "default": "0 9 * * *",
-            "help_text": "5-field cron: 'minute hour day-of-month month day-of-week'. Default '0 9 * * *' = every day at 09:00. Used by Apply Schedule.",
+            "help_text": "5-field cron: 'minute hour day-of-month month day-of-week'. Default '0 9 * * *' = every day at 09:00 in the timezone below. Used by Apply Schedule.",
+        },
+        {
+            "id": "report_timezone",
+            "label": "Report Timezone",
+            "type": "string",
+            "default": "",
+            "placeholder": "Europe/London  (blank = UTC)",
+            "help_text": "IANA timezone name (e.g. Europe/London, Australia/Brisbane, America/New_York). Blank = interpret cron as UTC. Re-click Apply Schedule after changing.",
         },
         {
             "id": "report_chat_id",
@@ -771,6 +795,20 @@ class Plugin:
             logger.error("apply_schedule: invalid cron %r: %s", cron_expr, exc)
             return {"status": "error", "message": str(exc)}
 
+        # Validate timezone string before touching django-celery-beat. An
+        # invalid TZ would otherwise be saved as the default UTC silently.
+        tz_name = (settings.get("report_timezone") or "").strip()
+        if tz_name:
+            try:
+                from zoneinfo import ZoneInfo
+                ZoneInfo(tz_name)
+            except Exception as exc:
+                logger.error("apply_schedule: invalid timezone %r: %s", tz_name, exc)
+                return {
+                    "status": "error",
+                    "message": f"Invalid timezone {tz_name!r}: {exc}. Use IANA names like 'Europe/London'.",
+                }
+
         try:
             from django_celery_beat.models import PeriodicTask, CrontabSchedule
         except ImportError as exc:
@@ -780,10 +818,13 @@ class Plugin:
                 "message": "django-celery-beat not available in this Dispatcharr build.",
             }
 
-        schedule, _ = CrontabSchedule.objects.get_or_create(
+        crontab_kwargs = dict(
             minute=minute, hour=hour, day_of_month=dom,
             month_of_year=month, day_of_week=dow,
         )
+        if tz_name:
+            crontab_kwargs["timezone"] = tz_name
+        schedule, _ = CrontabSchedule.objects.get_or_create(**crontab_kwargs)
 
         # Snapshot the user-visible settings (drop any internal/private keys).
         snapshot = {k: v for k, v in (settings or {}).items() if not k.startswith("_")}
@@ -800,19 +841,20 @@ class Plugin:
         )
         verb = "Created" if created else "Updated"
         enabled = bool(settings.get("report_enabled", False))
+        tz_label = tz_name or "UTC"
         logger.info(
-            "apply_schedule: %s '%s' @ '%s' enabled=%s",
-            verb, self.SCHEDULE_TASK_NAME, cron_expr, enabled,
+            "apply_schedule: %s '%s' @ '%s' (%s) enabled=%s",
+            verb, self.SCHEDULE_TASK_NAME, cron_expr, tz_label, enabled,
         )
 
         if not enabled:
             return {
                 "status": "ok",
-                "message": f"{verb} schedule for cron '{cron_expr}'. Enable 'Daily Report' setting + re-Apply to activate.",
+                "message": f"{verb} schedule for cron '{cron_expr}' ({tz_label}). Enable 'Daily Report' + re-Apply to activate.",
             }
         return {
             "status": "ok",
-            "message": f"{verb} schedule for cron '{cron_expr}'. Active.",
+            "message": f"{verb} schedule for cron '{cron_expr}' ({tz_label}). Active.",
         }
 
     def _action_remove_schedule(self, settings: Dict[str, Any], logger) -> Dict[str, Any]:
@@ -899,7 +941,7 @@ class Plugin:
     def _http_get_json(url: str, timeout: int = REPORT_HTTP_TIMEOUT_SECS) -> Optional[Dict[str, Any]]:
         """Best-effort JSON GET. Returns None on any failure."""
         try:
-            request = urllib.request.Request(url, headers={"User-Agent": "telegram-alerts/0.4"})
+            request = urllib.request.Request(url, headers={"User-Agent": REPORT_USER_AGENT})
             with urllib.request.urlopen(request, timeout=timeout) as resp:
                 body = resp.read().decode("utf-8", errors="replace")
                 return json.loads(body) if body else None
@@ -936,7 +978,7 @@ class Plugin:
         Returns None on any failure."""
         url = SPEEDTEST_DOWN_URL.format(bytes=SPEEDTEST_DOWN_BYTES)
         try:
-            request = urllib.request.Request(url, headers={"User-Agent": "telegram-alerts/0.4"})
+            request = urllib.request.Request(url, headers={"User-Agent": REPORT_USER_AGENT})
             t0 = _time.monotonic()
             with urllib.request.urlopen(request, timeout=SPEEDTEST_TIMEOUT_SECS) as resp:
                 total = 0
@@ -964,7 +1006,7 @@ class Plugin:
                 data=payload,
                 headers={
                     "Content-Type": "application/octet-stream",
-                    "User-Agent": "telegram-alerts/0.4",
+                    "User-Agent": REPORT_USER_AGENT,
                 },
                 method="POST",
             )
@@ -985,29 +1027,38 @@ class Plugin:
     def _collect_activity_stats(window_start: _dt.datetime) -> Dict[str, Any]:
         """Aggregate SystemEvent counts since `window_start`. Returns a dict
         with channel_plays / top_channels / vod_plays / errors / switches.
-        Empty dict on any failure."""
-        out: Dict[str, Any] = {}
+
+        Note: SystemEvent's timestamp field is named `timestamp`, NOT
+        `created_at`. (Tripped me up in v0.4.0; the bare except hid the
+        FieldError and the report rendered '(no data available)'.)
+
+        Returns {} only when the import itself fails (no Dispatcharr
+        installed). Other exceptions propagate so they show up in logs
+        instead of silently producing an empty section.
+        """
         try:
             from core.models import SystemEvent
             from django.db.models import Count
-            qs = SystemEvent.objects.filter(created_at__gte=window_start)
-            out["channel_plays"] = qs.filter(event_type="channel_start").count()
-            out["vod_plays"] = qs.filter(event_type="vod_start").count()
-            out["switches"] = qs.filter(event_type="stream_switch").count()
-            out["errors"] = qs.filter(
-                event_type__in=("channel_error", "channel_failover")
-            ).count()
-            top = (
-                qs.filter(event_type="channel_start")
-                .exclude(channel_name__isnull=True)
-                .exclude(channel_name__exact="")
-                .values("channel_name")
-                .annotate(n=Count("id"))
-                .order_by("-n")[:3]
-            )
-            out["top_channels"] = [(row["channel_name"], row["n"]) for row in top]
-        except Exception:
+        except ImportError:
             return {}
+
+        out: Dict[str, Any] = {}
+        qs = SystemEvent.objects.filter(timestamp__gte=window_start)
+        out["channel_plays"] = qs.filter(event_type="channel_start").count()
+        out["vod_plays"] = qs.filter(event_type="vod_start").count()
+        out["switches"] = qs.filter(event_type="stream_switch").count()
+        out["errors"] = qs.filter(
+            event_type__in=("channel_error", "channel_failover")
+        ).count()
+        top = (
+            qs.filter(event_type="channel_start")
+            .exclude(channel_name__isnull=True)
+            .exclude(channel_name__exact="")
+            .values("channel_name")
+            .annotate(n=Count("id"))
+            .order_by("-n")[:3]
+        )
+        out["top_channels"] = [(row["channel_name"], row["n"]) for row in top]
         return out
 
     @staticmethod

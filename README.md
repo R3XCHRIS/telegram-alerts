@@ -151,7 +151,8 @@ Channel UUIDs are not included — Dispatcharr's event payload doesn't carry the
 | Include Current EPG Program | boolean | off | Adds the currently-airing program title. Requires the channel to have an EPG mapping. One DB lookup per event. |
 | Message Format | select | `HTML` | `HTML` or `plain`. |
 | **Enable Daily Report** | boolean | off | Master toggle for the cron-driven daily report. After turning on, click **Apply Schedule** in the Actions tab to register the cron. |
-| Report Schedule (cron) | string | `0 9 * * *` | 5-field cron. Default = every day 09:00. |
+| Report Schedule (cron) | string | `0 9 * * *` | 5-field cron. Default = every day 09:00 in the timezone below. |
+| Report Timezone | string | (empty = UTC) | IANA name (e.g. `Europe/London`, `Australia/Brisbane`). Re-Apply after changing. |
 | Report Chat ID | string | (empty) | Send report to a different chat than per-event alerts. Blank = use main Chat ID. |
 | Include Network Section | boolean | on | Public IP + geographic location lookup. |
 | Include Speedtest | boolean | on | Down/up bandwidth via Cloudflare. ~150 MB per test, respects the cooldown below. |
@@ -245,6 +246,11 @@ The plugin writes a small `.state.json` file alongside its code (e.g. `/data/plu
 ---
 
 ## Changelog
+
+### 0.4.1
+- Fix: **Activity section was always empty**. `_collect_activity_stats` queried `SystemEvent.created_at`, but the actual field is `SystemEvent.timestamp`. The bare `except` swallowed the `FieldError` and the section silently rendered "(no data available)".
+- Fix: **Speedtest download was always (failed)**. Cloudflare's `/__down` endpoint returns HTTP 403 to non-browser User-Agents. Now uses a Mozilla UA for the speedtest endpoints (and the IP/geo lookups for consistency).
+- New setting **Report Timezone**: IANA timezone name (e.g. `Europe/London`). Cron is now interpreted in this timezone instead of always UTC. Blank = UTC (unchanged default).
 
 ### 0.4.0
 - New optional **daily report** feature: cron-driven digest covering public IP + geographic location, Cloudflare speedtest (down/up), activity stats (channel plays, top 3 channels, VOD plays, errors, stream switches), and source health (M3U accounts, EPG freshness).

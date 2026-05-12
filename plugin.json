@@ -1,6 +1,6 @@
 {
   "name": "Telegram Alerts",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Push Dispatcharr channel/stream/VOD events to a Telegram chat via a bot. Includes a manual test action, per-event toggles, and an optional cron-driven daily report (public IP + geo + speedtest + activity + source health).",
   "author": "R3XCHRIS",
   "license": "MIT",
@@ -146,7 +146,15 @@
       "label": "Report Schedule (cron)",
       "type": "string",
       "default": "0 9 * * *",
-      "help_text": "5-field cron: 'minute hour day-of-month month day-of-week'. Default '0 9 * * *' = every day at 09:00. Used by Apply Schedule."
+      "help_text": "5-field cron: 'minute hour day-of-month month day-of-week'. Default '0 9 * * *' = every day at 09:00 in the timezone below. Used by Apply Schedule."
+    },
+    {
+      "id": "report_timezone",
+      "label": "Report Timezone",
+      "type": "string",
+      "default": "",
+      "placeholder": "Europe/London  (blank = UTC)",
+      "help_text": "IANA timezone name (e.g. Europe/London, Australia/Brisbane, America/New_York). Blank = interpret cron as UTC. Re-click Apply Schedule after changing."
     },
     {
       "id": "report_chat_id",
