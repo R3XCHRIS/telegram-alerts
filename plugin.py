@@ -1,6 +1,11 @@
 """
 Telegram Alerts — Dispatcharr plugin
 (slug: telegram-alerts)
+v0.4.2 — speedtest download fix: Cloudflare rejects single requests
+         over ~75 MB with HTTP 403, so the v0.4.1 UA fix only got us
+         past one of two filters. Now chunks the download into 4×25 MB
+         sequential GETs, same pattern browser-based speed tests use.
+
 v0.4.1 — fixes for v0.4.0 daily report:
            * Activity section was always empty: SystemEvent's field is
              `timestamp`, not `created_at`. The bare except hid the
@@ -62,8 +67,13 @@ IPIFY_URL = "https://api.ipify.org?format=json"
 IPAPI_TEMPLATE = "https://ipapi.co/{ip}/json/"
 SPEEDTEST_DOWN_URL = "https://speed.cloudflare.com/__down?bytes={bytes}"
 SPEEDTEST_UP_URL = "https://speed.cloudflare.com/__up"
-SPEEDTEST_DOWN_BYTES = 100_000_000  # 100 MB
-SPEEDTEST_UP_BYTES = 25_000_000     # 25 MB (uploads are slower; keep under 30s on residential)
+# Cloudflare's /__down rejects single requests over ~75 MB with HTTP 403
+# (anti-abuse). Real browser speed tests chunk the transfer. We do the
+# same: NUM_CHUNKS sequential GETs of CHUNK_BYTES each, aggregate Mbps =
+# sum(bytes) / sum(elapsed).
+SPEEDTEST_DOWN_CHUNK_BYTES = 25_000_000  # 25 MB per request — comfortably under threshold
+SPEEDTEST_DOWN_NUM_CHUNKS = 4            # ~100 MB total
+SPEEDTEST_UP_BYTES = 25_000_000          # 25 MB single POST (uploads are slower; keep under 30s on residential)
 SPEEDTEST_TIMEOUT_SECS = 120
 REPORT_HTTP_TIMEOUT_SECS = 15
 
@@ -90,7 +100,7 @@ class Plugin:
     """Send Dispatcharr alerts to a Telegram chat."""
 
     name = "Telegram Alerts"
-    version = "0.4.1"
+    version = "0.4.2"
     description = (
         "Push Dispatcharr channel/stream/VOD events to a Telegram chat via a bot. "
         "Includes a manual test action, per-event toggles, and an optional "
@@ -974,24 +984,40 @@ class Plugin:
 
     @staticmethod
     def _speedtest_download() -> Optional[float]:
-        """Download SPEEDTEST_DOWN_BYTES from Cloudflare and return Mbps.
-        Returns None on any failure."""
-        url = SPEEDTEST_DOWN_URL.format(bytes=SPEEDTEST_DOWN_BYTES)
+        """Download bandwidth via NUM_CHUNKS sequential CHUNK_BYTES GETs to
+        Cloudflare. Returns aggregate Mbps = sum(bytes) / sum(elapsed), or
+        None on any failure.
+
+        Single requests over ~75 MB are rejected by Cloudflare's anti-abuse
+        filter with HTTP 403 (real browser speed tests chunk for the same
+        reason). 4×25 MB stays under the threshold and gives ~10s of
+        measurement on residential connections — accurate enough for a
+        daily trend.
+        """
+        url = SPEEDTEST_DOWN_URL.format(bytes=SPEEDTEST_DOWN_CHUNK_BYTES)
         try:
-            request = urllib.request.Request(url, headers={"User-Agent": REPORT_USER_AGENT})
-            t0 = _time.monotonic()
-            with urllib.request.urlopen(request, timeout=SPEEDTEST_TIMEOUT_SECS) as resp:
-                total = 0
-                while True:
-                    chunk = resp.read(65536)
-                    if not chunk:
-                        break
-                    total += len(chunk)
-            elapsed = _time.monotonic() - t0
-            if elapsed <= 0 or total <= 0:
+            total_bytes = 0
+            total_elapsed = 0.0
+            for _ in range(SPEEDTEST_DOWN_NUM_CHUNKS):
+                request = urllib.request.Request(
+                    url, headers={"User-Agent": REPORT_USER_AGENT}
+                )
+                t0 = _time.monotonic()
+                with urllib.request.urlopen(request, timeout=SPEEDTEST_TIMEOUT_SECS) as resp:
+                    got = 0
+                    while True:
+                        chunk = resp.read(65536)
+                        if not chunk:
+                            break
+                        got += len(chunk)
+                elapsed = _time.monotonic() - t0
+                if got <= 0 or elapsed <= 0:
+                    return None
+                total_bytes += got
+                total_elapsed += elapsed
+            if total_bytes <= 0 or total_elapsed <= 0:
                 return None
-            mbps = (total * 8) / elapsed / 1_000_000
-            return round(mbps, 1)
+            return round((total_bytes * 8) / total_elapsed / 1_000_000, 1)
         except Exception:
             return None
 

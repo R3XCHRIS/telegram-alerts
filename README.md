@@ -247,6 +247,9 @@ The plugin writes a small `.state.json` file alongside its code (e.g. `/data/plu
 
 ## Changelog
 
+### 0.4.2
+- Fix: **Speedtest download was still failing** in v0.4.1. Cloudflare's `/__down` rejects single requests over ~75 MB with HTTP 403 (anti-abuse), separate from the User-Agent filter v0.4.1 fixed. Now chunks the download into 4×25 MB sequential GETs — same pattern browser-based speed tests use. Aggregate Mbps = total bytes / total elapsed.
+
 ### 0.4.1
 - Fix: **Activity section was always empty**. `_collect_activity_stats` queried `SystemEvent.created_at`, but the actual field is `SystemEvent.timestamp`. The bare `except` swallowed the `FieldError` and the section silently rendered "(no data available)".
 - Fix: **Speedtest download was always (failed)**. Cloudflare's `/__down` endpoint returns HTTP 403 to non-browser User-Agents. Now uses a Mozilla UA for the speedtest endpoints (and the IP/geo lookups for consistency).
