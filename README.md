@@ -247,6 +247,11 @@ The plugin writes a small `.state.json` file alongside its code (e.g. `/data/plu
 
 ## Changelog
 
+### 0.4.4
+- Fix: **Daily report never actually sent.** Same upstream Dispatcharr bug as [Dispatcharr#1244](https://github.com/Dispatcharr/Dispatcharr/issues/1244): plugin `@shared_task` registrations don't propagate to Celery's default-queue prefork pool children, so the daily report task — dispatched correctly by beat at the configured cron time — was rejected by every worker with `KeyError: 'telegram_alerts.send_daily_report'`. The `total_run_count` on the periodic task still ticked up, so Show Status looked healthy. As a workaround the plugin now routes its scheduled task to the `dvr` queue (single-process thread pool — does register the task correctly). [Dispatcharr#1245](https://github.com/Dispatcharr/Dispatcharr/pull/1245) is a partial upstream fix; a follow-up using `worker_process_init` instead of `worker_ready` is needed to remove this workaround.
+- Fix: **Show Status `last_run_at` was meaningless.** django-celery-beat only updates that field on dispatch, not on completion — so the timestamp moved even when the worker rejected the task. The task now bumps `last_run_at` itself on successful completion. A stale timestamp now correctly indicates a failing schedule.
+- **Upgrade note:** if you set up your schedule on 0.4.3 or earlier, click **Apply Schedule** once after upgrading — that rewrites the stored task to add `queue='dvr'`. Without it, beat will keep dispatching to the default queue (where the worker rejects the task).
+
 ### 0.4.3
 - Geo lookup switched from `ipapi.co` to `ipinfo.io` — ipapi was returning HTTP 403 after a handful of probes (likely free-tier per-IP rate limit). ipinfo gives 50k/month per IP with no auth.
 - Network section now includes a **country flag emoji** derived from the 2-letter country code (e.g. 🇬🇧 London, England). The full country name is no longer rendered — the flag carries the same information and is more visually scannable.

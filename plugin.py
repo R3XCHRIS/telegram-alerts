@@ -109,7 +109,7 @@ class Plugin:
     """Send Dispatcharr alerts to a Telegram chat."""
 
     name = "Telegram Alerts"
-    version = "0.4.3"
+    version = "0.4.4"
     description = (
         "Push Dispatcharr channel/stream/VOD events to a Telegram chat via a bot. "
         "Includes a manual test action, per-event toggles, and an optional "
@@ -853,6 +853,7 @@ class Plugin:
             defaults={
                 "crontab": schedule,
                 "task": self.SCHEDULED_TASK_CELERY_NAME,
+                "queue": "dvr",
                 "kwargs": json.dumps({"settings": snapshot}),
                 "enabled": bool(settings.get("report_enabled", False)),
                 "description": f"Daily report for {self.name} v{self.version}",
@@ -1344,13 +1345,29 @@ try:
     def _telegram_alerts_send_daily_report(settings=None):
         """Celery entry point invoked by the periodic task registered via
         _action_apply_schedule. Runs `send_report_now` against the snapshot
-        settings stored in PeriodicTask.kwargs."""
+        settings stored in PeriodicTask.kwargs.
+
+        On completion, bumps PeriodicTask.last_run_at so [SCHEDULE] Show
+        status reflects true completion time rather than beat's dispatch-
+        start time. Without this, a tick that beat dispatched but the
+        worker rejected (the pre-v0.4.4 'unregistered task' failure mode)
+        still appeared healthy in the UI.
+        """
         import logging as _logging
         logger = _logging.getLogger("telegram_alerts.schedule")
-        return Plugin().run("send_report_now", {}, {
+        result = Plugin().run("send_report_now", {}, {
             "logger": logger,
             "settings": settings or {},
         })
+        try:
+            from django.utils import timezone
+            from django_celery_beat.models import PeriodicTask
+            PeriodicTask.objects.filter(name=Plugin.SCHEDULE_TASK_NAME).update(
+                last_run_at=timezone.now(),
+            )
+        except Exception as e:
+            logger.warning("Failed to bump PeriodicTask.last_run_at: %s", e)
+        return result
 except Exception as _celery_register_err:  # pragma: no cover
     import sys as _sys
     print(
