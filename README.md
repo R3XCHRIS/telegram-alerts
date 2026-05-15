@@ -3,25 +3,26 @@
 # Dispatcharr Telegram Alerts
 
 > [!WARNING]
-> ## ⚠ Requires a not-yet-released Dispatcharr fix to function
+> ## ⚠ Use the `:dev` Dispatcharr image until the next tagged release
 >
-> Event-driven alerts in this plugin will **silently never fire** on the current released versions of Dispatcharr. The manual **Send Test** action works fine, which makes it look like the plugin is broken — but the failure is actually upstream in Dispatcharr's plugin event dispatch loop ([Dispatcharr/Dispatcharr#1231](https://github.com/Dispatcharr/Dispatcharr/issues/1231)).
+> This plugin depends on two upstream Dispatcharr fixes that are merged into the `dev` branch but predate the current `:latest` image:
 >
-> A one-line fix is open as [Dispatcharr/Dispatcharr#1232](https://github.com/Dispatcharr/Dispatcharr/pull/1232). Once it's merged and reaches a Dispatcharr release, this warning will be removed and `min_dispatcharr_version` in `plugin.json` will be bumped to that release.
+> 1. **Event-driven alerts need [Dispatcharr/Dispatcharr#1232](https://github.com/Dispatcharr/Dispatcharr/pull/1232).** Without it, real channel/stream/VOD events silently produce nothing — only the manual **Send Test** action works.
+> 2. **The daily report needs [Dispatcharr/Dispatcharr#1245](https://github.com/Dispatcharr/Dispatcharr/pull/1245)**, which registers plugin `@shared_task` decorators with Celery workers. v0.4.4 ships a `queue="dvr"` workaround that keeps the daily report working on `:latest`, but `:dev` removes the need for that routing entirely.
 >
-> **Until then, you have two options:**
+> Use the `:dev` image until the next tagged Dispatcharr release ships both fixes:
 >
-> 1. **Wait for the fix to land in a Dispatcharr release** (recommended for most users).
-> 2. **Hot-patch your container yourself** — works today, reverts on the next Watchtower / image update so you'd need to re-apply:
+> ```yaml
+> # docker-compose.yml
+> services:
+>   dispatcharr:
+>     image: ghcr.io/dispatcharr/dispatcharr:dev
+>     # ...rest of your config
+> ```
 >
->    ```bash
->    docker exec <container> sed -i \
->      's|plugin.key|plugin["key"]|g; s|plugin.name|plugin["name"]|g' \
->      /app/apps/connect/utils.py
->    docker restart <container>
->    ```
+> Once a stable release ships #1232 and #1245, this warning will be removed and `min_dispatcharr_version` in `plugin.json` will be bumped accordingly.
 >
-> If you install this plugin and only the **Send Test** button works while real channel/stream/VOD events produce nothing, you've hit this. It is **not** a bug in Telegram Alerts.
+> **Diagnostic on `:latest`:** if you install and only **Send Test** works while real channel/stream/VOD events produce nothing, you've hit #1232 — it is **not** a bug in Telegram Alerts.
 
 ---
 
